@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.3](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.2...v1.0.3) (2026-01-02)
+
+### Bug Fixes
+
+* **ci:** use RELEASE_TOKEN to trigger binary builds ([29f9174](https://github.com/ImDevinC/livesync-bridge-go/commit/29f917465a5712023d2a85dd7fa25ae54c86ad95))
+
 ## [1.0.2](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.1...v1.0.2) (2026-01-02)
 
 ### Bug Fixes
