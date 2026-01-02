@@ -2,27 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and uses [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [Unreleased]
+## Unreleased
 
-### Added
-- Initial release of LiveSync Bridge Go port
+Initial development version with complete Go port of livesync-bridge from TypeScript/Deno.
 
-### Changed
+### Features
 
-### Deprecated
-
-### Removed
-
-### Fixed
-
-### Security
-
-## [1.0.0] - TBD
-
-### Added
 - Complete port from TypeScript/Deno to Go
 - XDG directory support (Linux, macOS, Windows)
 - Config loading with JSON validation
@@ -43,5 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-platform binary releases (Linux, macOS, Windows - AMD64 & ARM64)
 - Complete documentation (README, USAGE, TESTING, API docs)
 
-[Unreleased]: https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/ImDevinC/livesync-bridge-go/releases/tag/v1.0.0
+### Bug Fixes
+
+- Fixed CI workflow golangci-lint version mismatch
+- Fixed macOS file watching test failures with platform-specific timeouts
+- Fixed race condition in test mock dispatcher
+- Fixed flaky Windows test for unique string generation
+- Fixed various linting issues (gosimple, errcheck, staticcheck)
