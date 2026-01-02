@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -919,4 +920,257 @@ func TestInitialSyncConfig(t *testing.T) {
 // Helper function to create bool pointer
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+// TestSyncedDocumentTracking tests the helper functions for tracking synced documents
+func TestSyncedDocumentTracking(t *testing.T) {
+	p, _, cleanup := setupTestPeer(t)
+	if p == nil {
+		return
+	}
+	defer cleanup()
+
+	docID := "test-doc-123"
+
+	// Initially should not be synced
+	if p.isDocumentSynced(docID) {
+		t.Error("Document should not be marked as synced initially")
+	}
+
+	// Mark as synced
+	if err := p.markDocumentSynced(docID); err != nil {
+		t.Fatalf("Failed to mark document as synced: %v", err)
+	}
+
+	// Should now be synced
+	if !p.isDocumentSynced(docID) {
+		t.Error("Document should be marked as synced")
+	}
+
+	// Remove sync tracking
+	if err := p.removeDocumentSynced(docID); err != nil {
+		t.Fatalf("Failed to remove document sync tracking: %v", err)
+	}
+
+	// Should no longer be synced
+	if p.isDocumentSynced(docID) {
+		t.Error("Document should not be marked as synced after removal")
+	}
+}
+
+// TestScanInitialDocuments_DetectsDeletions tests deletion detection during initial sync
+func TestScanInitialDocuments_DetectsDeletions(t *testing.T) {
+	if os.Getenv("COUCHDB_URL") == "" {
+		t.Skip("Set COUCHDB_URL environment variable to run integration tests")
+	}
+
+	// Track dispatched events
+	var deletedPaths []string
+	var mu sync.Mutex
+	dispatcher := func(source peer.Peer, path string, data *peer.FileData) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if data != nil && data.Deleted {
+			deletedPaths = append(deletedPaths, path)
+		}
+		return nil
+	}
+
+	// Create peer with custom dispatcher
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := storage.NewStore(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	cfg := getTestConfig()
+	p, err := NewCouchDBPeer(cfg, dispatcher, store)
+	if err != nil {
+		t.Skipf("CouchDB not available: %v", err)
+	}
+	defer p.Stop()
+
+	ctx := context.Background()
+
+	// Create a document using the peer
+	docPath := "test/deleted-doc.md"
+	docContent := []byte("This document will be deleted")
+
+	fileData := &peer.FileData{
+		CTime: time.Now(),
+		MTime: time.Now(),
+		Size:  int64(len(docContent)),
+		Data:  docContent,
+	}
+
+	if _, err := p.Put(docPath, fileData); err != nil {
+		t.Fatalf("Failed to create document: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Get the document ID and mark as synced
+	docID := docPathToID(p.ToLocalPath(docPath))
+	if err := p.markDocumentSynced(docID); err != nil {
+		t.Fatalf("Failed to mark document as synced: %v", err)
+	}
+
+	// Delete the document using the peer's Delete method
+	if _, err := p.Delete(docPath); err != nil {
+		t.Fatalf("Failed to delete document: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Run initial scan - should detect the deletion
+	if err := p.scanInitialDocuments(ctx); err != nil {
+		t.Fatalf("Failed to scan initial documents: %v", err)
+	}
+
+	// Verify deletion was detected and dispatched
+	mu.Lock()
+	deletionCount := len(deletedPaths)
+	mu.Unlock()
+
+	if deletionCount != 1 {
+		t.Errorf("Expected 1 deletion, got %d", deletionCount)
+	}
+
+	// Verify sync tracking was cleaned up
+	if p.isDocumentSynced(docID) {
+		t.Error("Document should no longer be marked as synced after deletion")
+	}
+
+	// Verify metadata was cleaned up
+	metaKey := docMetaPrefix + p.Name() + "-" + docPath
+	if meta, _ := p.GetSetting(metaKey); meta != "" {
+		t.Error("Metadata should be cleaned up after deletion")
+	}
+}
+
+// TestInitialSync_IgnoresNeverSeenDeletions tests that first run doesn't report false deletions
+func TestInitialSync_IgnoresNeverSeenDeletions(t *testing.T) {
+	if os.Getenv("COUCHDB_URL") == "" {
+		t.Skip("Set COUCHDB_URL environment variable to run integration tests")
+	}
+
+	// Track dispatched events
+	var deletedCount int
+	var mu sync.Mutex
+	dispatcher := func(source peer.Peer, path string, data *peer.FileData) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if data != nil && data.Deleted {
+			deletedCount++
+		}
+		return nil
+	}
+
+	// Create peer with custom dispatcher
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := storage.NewStore(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	cfg := getTestConfig()
+	p, err := NewCouchDBPeer(cfg, dispatcher, store)
+	if err != nil {
+		t.Skipf("CouchDB not available: %v", err)
+	}
+	defer p.Stop()
+
+	ctx := context.Background()
+
+	// Run initial scan with empty database - should not detect any deletions
+	if err := p.scanInitialDocuments(ctx); err != nil {
+		t.Fatalf("Failed to scan initial documents: %v", err)
+	}
+
+	// Verify no deletions were detected
+	mu.Lock()
+	count := deletedCount
+	mu.Unlock()
+
+	if count > 0 {
+		t.Errorf("Expected 0 deletions on first run, got %d", count)
+	}
+}
+
+// TestWatchChanges_CleansUpSyncedDocOnDeletion tests that watchChanges cleans up tracking
+func TestWatchChanges_CleansUpSyncedDocOnDeletion(t *testing.T) {
+	if os.Getenv("COUCHDB_URL") == "" {
+		t.Skip("Set COUCHDB_URL environment variable to run integration tests")
+	}
+
+	p, _, cleanup := setupTestPeer(t)
+	if p == nil {
+		return
+	}
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create and sync a document
+	docPath := "test/watch-delete.md"
+	docContent := []byte("This document will be deleted via changes feed")
+
+	fileData := &peer.FileData{
+		CTime: time.Now(),
+		MTime: time.Now(),
+		Size:  int64(len(docContent)),
+		Data:  docContent,
+	}
+
+	if _, err := p.Put(docPath, fileData); err != nil {
+		t.Fatalf("Failed to create document: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Get the document ID and mark as synced
+	docID := docPathToID(p.ToLocalPath(docPath))
+	if err := p.markDocumentSynced(docID); err != nil {
+		t.Fatalf("Failed to mark document as synced: %v", err)
+	}
+
+	// Verify it's marked as synced
+	if !p.isDocumentSynced(docID) {
+		t.Fatal("Document should be marked as synced before deletion")
+	}
+
+	// Start watching changes (in background)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	p.wg.Add(1)
+	go p.watchChanges(ctx, "")
+
+	// Wait a moment for changes feed to start
+	time.Sleep(500 * time.Millisecond)
+
+	// Delete the document
+	if _, err := p.Delete(docPath); err != nil {
+		t.Fatalf("Failed to delete document: %v", err)
+	}
+
+	// Wait for change to be processed
+	time.Sleep(2 * time.Second)
+
+	// Stop watching
+	cancel()
+	p.wg.Wait()
+
+	// Verify sync tracking was cleaned up
+	if p.isDocumentSynced(docID) {
+		t.Error("Document should no longer be marked as synced after deletion via changes feed")
+	}
+
+	// Verify metadata was cleaned up
+	metaKey := docMetaPrefix + p.Name() + "-" + docPath
+	if meta, _ := p.GetSetting(metaKey); meta != "" {
+		t.Error("Metadata should be cleaned up after deletion via changes feed")
+	}
 }

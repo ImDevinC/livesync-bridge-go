@@ -121,3 +121,32 @@ func (s *Store) GetWithDefault(key, defaultValue string) string {
 	}
 	return value
 }
+
+// IteratePrefix iterates over all keys with the given prefix and calls the callback for each
+func (s *Store) IteratePrefix(prefix string, callback func(key, value string) error) error {
+	return s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(defaultBucket))
+		c := b.Cursor()
+
+		prefixBytes := []byte(prefix)
+		for k, v := c.Seek(prefixBytes); k != nil && len(k) >= len(prefixBytes); k, v = c.Next() {
+			// Check if key still has the prefix
+			hasPrefix := true
+			for i := 0; i < len(prefixBytes); i++ {
+				if k[i] != prefixBytes[i] {
+					hasPrefix = false
+					break
+				}
+			}
+
+			if !hasPrefix {
+				break
+			}
+
+			if err := callback(string(k), string(v)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}

@@ -1,6 +1,7 @@
 package storagepeer
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -522,5 +523,206 @@ func TestIsBinaryData(t *testing.T) {
 				t.Errorf("isBinaryData() = %v, want %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestScanOfflineDeletions_DetectsDeletedFiles tests offline deletion detection
+func TestScanOfflineDeletions_DetectsDeletedFiles(t *testing.T) {
+	dir := createTempDir(t)
+	defer os.RemoveAll(dir)
+
+	store := createTempStore(t)
+	mock := &mockDispatcher{}
+
+	conf := config.PeerStorageConf{
+		Name:    "test-peer",
+		Type:    "storage",
+		Group:   "test-group",
+		BaseDir: dir,
+	}
+
+	sp, err := NewStoragePeer(conf, mock.dispatch, store)
+	if err != nil {
+		t.Fatalf("NewStoragePeer failed: %v", err)
+	}
+	defer sp.Stop()
+
+	// Create and sync some files
+	file1 := filepath.Join(dir, "file1.txt")
+	file2 := filepath.Join(dir, "file2.txt")
+	file3 := filepath.Join(dir, "file3.txt")
+
+	if err := os.WriteFile(file1, []byte("content1"), 0644); err != nil {
+		t.Fatalf("Failed to create file1: %v", err)
+	}
+	if err := os.WriteFile(file2, []byte("content2"), 0644); err != nil {
+		t.Fatalf("Failed to create file2: %v", err)
+	}
+	if err := os.WriteFile(file3, []byte("content3"), 0644); err != nil {
+		t.Fatalf("Failed to create file3: %v", err)
+	}
+
+	// Update file stats to simulate that these files were synced
+	info1, _ := os.Stat(file1)
+	info2, _ := os.Stat(file2)
+	info3, _ := os.Stat(file3)
+	sp.SetSetting(fileStatPrefix+"file1.txt", fmt.Sprintf("%d-%d", info1.ModTime().Unix(), info1.Size()))
+	sp.SetSetting(fileStatPrefix+"file2.txt", fmt.Sprintf("%d-%d", info2.ModTime().Unix(), info2.Size()))
+	sp.SetSetting(fileStatPrefix+"file3.txt", fmt.Sprintf("%d-%d", info3.ModTime().Unix(), info3.Size()))
+
+	// Delete file1 and file2 from disk (simulating offline deletion)
+	os.Remove(file1)
+	os.Remove(file2)
+
+	// Call scanOfflineDeletions
+	if err := sp.scanOfflineDeletions(sp.Context()); err != nil {
+		t.Fatalf("scanOfflineDeletions failed: %v", err)
+	}
+
+	// Should have dispatched 2 deletions (file1 and file2)
+	if mock.callCount() != 2 {
+		t.Errorf("Expected 2 deletion dispatches, got %d", mock.callCount())
+	}
+
+	// Verify the deletions were for the correct files
+	call1 := mock.getCall(0)
+	call2 := mock.getCall(1)
+
+	paths := map[string]bool{
+		call1.path: true,
+		call2.path: true,
+	}
+
+	if !paths["file1.txt"] || !paths["file2.txt"] {
+		t.Error("Deletions should be for file1.txt and file2.txt")
+	}
+
+	// Verify deletion markers
+	if call1.data != nil && !call1.data.Deleted {
+		t.Error("Should dispatch deletion marker (Deleted=true)")
+	}
+	if call2.data != nil && !call2.data.Deleted {
+		t.Error("Should dispatch deletion marker (Deleted=true)")
+	}
+
+	// Verify file stats were cleaned up
+	if sp.HasSetting(fileStatPrefix + "file1.txt") {
+		t.Error("file1.txt stat should be removed")
+	}
+	if sp.HasSetting(fileStatPrefix + "file2.txt") {
+		t.Error("file2.txt stat should be removed")
+	}
+	if !sp.HasSetting(fileStatPrefix + "file3.txt") {
+		t.Error("file3.txt stat should still exist")
+	}
+}
+
+// TestScanOfflineDeletions_IgnoresNonExistentStats tests when no file stats exist
+func TestScanOfflineDeletions_IgnoresNonExistentStats(t *testing.T) {
+	dir := createTempDir(t)
+	defer os.RemoveAll(dir)
+
+	store := createTempStore(t)
+	mock := &mockDispatcher{}
+
+	conf := config.PeerStorageConf{
+		Name:    "test-peer",
+		Type:    "storage",
+		Group:   "test-group",
+		BaseDir: dir,
+	}
+
+	sp, err := NewStoragePeer(conf, mock.dispatch, store)
+	if err != nil {
+		t.Fatalf("NewStoragePeer failed: %v", err)
+	}
+	defer sp.Stop()
+
+	// No file stats in storage
+	if err := sp.scanOfflineDeletions(sp.Context()); err != nil {
+		t.Fatalf("scanOfflineDeletions failed: %v", err)
+	}
+
+	// Should not have dispatched anything
+	if mock.callCount() != 0 {
+		t.Errorf("Expected 0 dispatches, got %d", mock.callCount())
+	}
+}
+
+// TestStart_RunsBothScans tests that Start calls both scan functions
+func TestStart_RunsBothScans(t *testing.T) {
+	dir := createTempDir(t)
+	defer os.RemoveAll(dir)
+
+	store := createTempStore(t)
+	mock := &mockDispatcher{}
+
+	conf := config.PeerStorageConf{
+		Name:    "test-peer",
+		Type:    "storage",
+		Group:   "test-group",
+		BaseDir: dir,
+	}
+
+	sp, err := NewStoragePeer(conf, mock.dispatch, store)
+	if err != nil {
+		t.Fatalf("NewStoragePeer failed: %v", err)
+	}
+	defer sp.Stop()
+
+	// Create a file and update its stat
+	file1 := filepath.Join(dir, "existing.txt")
+	if err := os.WriteFile(file1, []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+	info1, _ := os.Stat(file1)
+	sp.SetSetting(fileStatPrefix+"existing.txt", fmt.Sprintf("%d-%d", info1.ModTime().Unix(), info1.Size()))
+
+	// Create another file and update stat, then delete it (simulating offline deletion)
+	file2 := filepath.Join(dir, "deleted.txt")
+	if err := os.WriteFile(file2, []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+	info2, _ := os.Stat(file2)
+	sp.SetSetting(fileStatPrefix+"deleted.txt", fmt.Sprintf("%d-%d", info2.ModTime().Unix(), info2.Size()))
+	os.Remove(file2)
+
+	// Modify the existing file to trigger offline change detection
+	time.Sleep(10 * time.Millisecond) // Ensure mtime changes
+	if err := os.WriteFile(file1, []byte("modified content"), 0644); err != nil {
+		t.Fatalf("Failed to modify file: %v", err)
+	}
+
+	// Start should run both scans
+	if err := sp.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Should have dispatched:
+	// 1. One change for modified existing.txt (from scanOfflineChanges)
+	// 2. One deletion for deleted.txt (from scanOfflineDeletions)
+	if mock.callCount() != 2 {
+		t.Errorf("Expected 2 dispatches (1 change + 1 deletion), got %d", mock.callCount())
+	}
+
+	// Find the change and deletion calls
+	hasChange := false
+	hasDeletion := false
+
+	for i := 0; i < mock.callCount(); i++ {
+		call := mock.getCall(i)
+		if call.path == "existing.txt" && call.data != nil && !call.data.Deleted {
+			hasChange = true
+		}
+		if call.path == "deleted.txt" && (call.data == nil || call.data.Deleted) {
+			hasDeletion = true
+		}
+	}
+
+	if !hasChange {
+		t.Error("Should have dispatched change for existing.txt")
+	}
+	if !hasDeletion {
+		t.Error("Should have dispatched deletion for deleted.txt")
 	}
 }

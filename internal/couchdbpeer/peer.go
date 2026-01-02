@@ -78,7 +78,8 @@ const (
 	DocTypeLeaf  = "leaf"
 
 	// Settings keys
-	docMetaPrefix = "doc-meta-"
+	docMetaPrefix   = "doc-meta-"
+	syncedDocPrefix = "synced-doc-"
 )
 
 // NewCouchDBPeer creates a new CouchDB peer
@@ -173,6 +174,24 @@ func (p *CouchDBPeer) updateDocumentMetadata(path string, doc *LiveSyncDocument)
 	return p.SetSetting(metaKey, meta)
 }
 
+// markDocumentSynced marks a document as synced for deletion detection
+func (p *CouchDBPeer) markDocumentSynced(docID string) error {
+	syncKey := syncedDocPrefix + p.Name() + "-" + docID
+	return p.SetSetting(syncKey, "1")
+}
+
+// isDocumentSynced checks if a document has been synced before
+func (p *CouchDBPeer) isDocumentSynced(docID string) bool {
+	syncKey := syncedDocPrefix + p.Name() + "-" + docID
+	return p.HasSetting(syncKey)
+}
+
+// removeDocumentSynced removes sync tracking for a deleted document
+func (p *CouchDBPeer) removeDocumentSynced(docID string) error {
+	syncKey := syncedDocPrefix + p.Name() + "-" + docID
+	return p.DeleteSetting(syncKey)
+}
+
 // scanInitialDocuments performs initial sync of existing CouchDB documents
 func (p *CouchDBPeer) scanInitialDocuments(ctx context.Context) error {
 	p.LogInfo("Scanning CouchDB for existing documents")
@@ -180,21 +199,19 @@ func (p *CouchDBPeer) scanInitialDocuments(ctx context.Context) error {
 	var totalDocs, newDocs, updatedDocs, skippedDocs int
 	const progressInterval = 50 // Log progress every N documents
 
+	// Track all document IDs seen during scan for deletion detection
+	seenDocIDs := make(map[string]bool)
+
 	// Use streaming iterator for memory efficiency
 	docChan, errChan := p.client.AllDocsIterator(ctx, "", 100)
 
+	// Phase 1: Process active documents
 	for {
 		select {
 		case doc, ok := <-docChan:
 			if !ok {
-				// Channel closed, we're done
-				p.LogInfo("Initial sync completed",
-					"total", totalDocs,
-					"new", newDocs,
-					"updated", updatedDocs,
-					"skipped", skippedDocs,
-				)
-				return nil
+				// Channel closed, Phase 1 complete - now detect deletions
+				goto deletionDetection
 			}
 
 			totalDocs++
@@ -212,6 +229,9 @@ func (p *CouchDBPeer) scanInitialDocuments(ctx context.Context) error {
 				continue
 			}
 
+			// Track that we've seen this document
+			seenDocIDs[lsDoc.ID] = true
+
 			// Apply filters
 			if !p.shouldSyncDocument(&lsDoc) {
 				skippedDocs++
@@ -224,6 +244,10 @@ func (p *CouchDBPeer) scanInitialDocuments(ctx context.Context) error {
 			// Check if document changed
 			if !p.hasDocumentChanged(globalPath, &lsDoc) {
 				skippedDocs++
+				// Still mark as synced even if unchanged
+				if err := p.markDocumentSynced(lsDoc.ID); err != nil {
+					p.LogDebug("Failed to mark document as synced", "docID", lsDoc.ID, "error", err)
+				}
 				continue
 			}
 
@@ -267,6 +291,11 @@ func (p *CouchDBPeer) scanInitialDocuments(ctx context.Context) error {
 				skippedDocs++
 			}
 
+			// Mark document as synced for deletion detection
+			if err := p.markDocumentSynced(lsDoc.ID); err != nil {
+				p.LogDebug("Failed to mark document as synced", "docID", lsDoc.ID, "error", err)
+			}
+
 			// Log progress
 			if totalDocs%progressInterval == 0 {
 				p.LogInfo("Initial sync progress",
@@ -287,6 +316,57 @@ func (p *CouchDBPeer) scanInitialDocuments(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+
+deletionDetection:
+	// Phase 2: Detect and process deletions
+	p.LogInfo("Checking for deleted documents")
+	var deletedDocs int
+
+	// Get all previously synced document IDs and check for deletions
+	syncPrefix := syncedDocPrefix + p.Name() + "-"
+	err := p.Store().IteratePrefix(syncPrefix, func(key string, value string) error {
+		// Extract document ID from key: "synced-doc-{peer-name}-{docID}"
+		docID := key[len(syncPrefix):]
+
+		// If this document wasn't seen in the current scan, it was deleted
+		if !seenDocIDs[docID] {
+			p.LogDebug("Detected deleted document", "docID", docID)
+
+			// In LiveSync, document IDs are typically the path, so use it directly
+			deletedPath := docID
+
+			// Dispatch deletion event
+			fileData := &peer.FileData{
+				MTime:   time.Now(),
+				Deleted: true,
+			}
+
+			if err := p.DispatchFrom(p, deletedPath, fileData); err != nil {
+				p.LogWarn("Failed to dispatch deletion", "path", deletedPath, "error", err)
+			} else {
+				deletedDocs++
+				// Clean up metadata and sync tracking
+				_ = p.DeleteSetting(docMetaPrefix + p.Name() + "-" + deletedPath)
+				_ = p.removeDocumentSynced(docID)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		p.LogWarn("Error during deletion detection", "error", err)
+	}
+
+	p.LogInfo("Initial sync completed",
+		"total", totalDocs,
+		"new", newDocs,
+		"updated", updatedDocs,
+		"skipped", skippedDocs,
+		"deleted", deletedDocs,
+	)
+
+	return nil
 }
 
 // Start begins monitoring the CouchDB changes feed
@@ -618,6 +698,10 @@ func (p *CouchDBPeer) watchChanges(ctx context.Context, since string) {
 				if !p.IsRepeating(globalPath, nil) {
 					p.DispatchFrom(p, globalPath, nil)
 					p.MarkProcessed(globalPath, nil)
+
+					// Clean up metadata and sync tracking
+					_ = p.DeleteSetting(docMetaPrefix + p.Name() + "-" + globalPath)
+					_ = p.removeDocumentSynced(lsDoc.ID)
 				}
 				continue
 			}
@@ -642,6 +726,10 @@ func (p *CouchDBPeer) watchChanges(ctx context.Context, since string) {
 			if !p.IsRepeating(globalPath, fileData) {
 				p.DispatchFrom(p, globalPath, fileData)
 				p.MarkProcessed(globalPath, fileData)
+
+				// Update metadata and mark document as synced
+				_ = p.updateDocumentMetadata(globalPath, &lsDoc)
+				_ = p.markDocumentSynced(lsDoc.ID)
 			}
 
 		case err := <-errChan:
