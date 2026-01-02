@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.0...v1.0.1) (2026-01-02)
+
+### Bug Fixes
+
+* **ci:** update release workflow to upload binaries only ([4706c2a](https://github.com/ImDevinC/livesync-bridge-go/commit/4706c2a74e185abc3a50cfc21b1f47adba363bcc))
+
 ## 1.0.0 (2026-01-02)
 
 ### Features
