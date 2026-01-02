@@ -145,7 +145,7 @@ func TestNewClient(t *testing.T) {
 	}
 
 	// Create a new client for cleanup
-	client, err = NewClient(ctx, getTestConfig())
+	_, err = NewClient(ctx, getTestConfig())
 	if err != nil {
 		t.Fatalf("Failed to recreate client: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestPutAttachment(t *testing.T) {
 		t.Fatalf("Failed to get document: %v", err)
 	}
 
-	if doc.Attachments == nil || len(doc.Attachments) == 0 {
+	if len(doc.Attachments) == 0 {
 		t.Error("Expected document to have attachments")
 	}
 }

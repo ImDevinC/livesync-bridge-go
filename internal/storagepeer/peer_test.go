@@ -56,12 +56,6 @@ func (md *mockDispatcher) dispatch(source peer.Peer, path string, data *peer.Fil
 	return nil
 }
 
-func (md *mockDispatcher) reset() {
-	md.mu.Lock()
-	defer md.mu.Unlock()
-	md.calls = nil
-}
-
 func (md *mockDispatcher) callCount() int {
 	md.mu.Lock()
 	defer md.mu.Unlock()

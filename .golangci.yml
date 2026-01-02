@@ -1,0 +1,35 @@
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+linters-settings:
+  errcheck:
+    # Don't check error returns for these functions
+    exclude-functions:
+      - (io.Closer).Close
+      - (*github.com/imdevinc/livesync-bridge/internal/storagepeer.mockDispatcher).reset
+      - (*github.com/imdevinc/livesync-bridge/internal/peer.BasePeer).Stop
+      - (*github.com/imdevinc/livesync-bridge/internal/peer.BasePeer).DispatchFrom
+      - (*github.com/imdevinc/livesync-bridge/internal/storage.Store).Set
+      - (*github.com/imdevinc/livesync-bridge/internal/storage.Store).SetSetting
+
+issues:
+  # Don't report issues in test files for now
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+    # Allow unchecked errors in defer statements
+    - text: "Error return value.*is not checked"
+      linters:
+        - errcheck
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly

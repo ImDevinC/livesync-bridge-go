@@ -28,15 +28,10 @@ func ToLocalPath(globalPath string, baseDir string) string {
 // Local: "shared/document.md" + baseDir: "shared/" -> Global: "document.md"
 func ToGlobalPath(localPath string, baseDir string) string {
 	// Handle underscore prefix
-	p := localPath
-	if strings.HasPrefix(p, "_") {
-		p = p[1:]
-	}
+	p := strings.TrimPrefix(localPath, "_")
 
 	// Remove baseDir prefix if present
-	if strings.HasPrefix(p, baseDir) {
-		p = p[len(baseDir):]
-	}
+	p = strings.TrimPrefix(p, baseDir)
 
 	return p
 }
