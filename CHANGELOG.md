@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.1.0...v1.1.1) (2026-01-02)
+
+### Bug Fixes
+
+* detect and sync deletions during offline periods ([ac62bc4](https://github.com/ImDevinC/livesync-bridge-go/commit/ac62bc4755456c317cef8b7cb7f88ac397f2daf1))
+
 ## [1.1.0](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.5...v1.1.0) (2026-01-02)
 
 ### Features
