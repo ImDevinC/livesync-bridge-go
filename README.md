@@ -76,6 +76,8 @@ livesync-bridge-go/
 ## Documentation
 
 - **[USAGE.md](USAGE.md)** - Complete usage guide with configuration examples
+- **[RELEASE.md](RELEASE.md)** - Release process and versioning guide
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
 - **[PLAN.md](PLAN.md)** - Original implementation plan
 - **[TESTING.md](TESTING.md)** - Complete testing guide with examples
 - **[pkg/couchdb/README.md](pkg/couchdb/README.md)** - CouchDB client library documentation
