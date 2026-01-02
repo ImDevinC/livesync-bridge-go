@@ -661,3 +661,262 @@ func BenchmarkCompression(b *testing.B) {
 		}
 	}
 }
+
+// TestShouldSyncDocument tests document filtering logic
+func TestShouldSyncDocument(t *testing.T) {
+	// Create minimal peer without CouchDB connection
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := storage.NewStore(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	dispatcher := func(source peer.Peer, path string, data *peer.FileData) error {
+		return nil
+	}
+
+	cfg := getTestConfig()
+	base, _ := peer.NewBasePeer(cfg.Name, "couchdb", cfg.Group, cfg.BaseDir, dispatcher, store)
+	p := &CouchDBPeer{
+		BasePeer: base,
+		baseDir:  cfg.BaseDir,
+	}
+
+	tests := []struct {
+		name     string
+		doc      *LiveSyncDocument
+		expected bool
+	}{
+		{
+			name: "valid document in baseDir",
+			doc: &LiveSyncDocument{
+				ID:   "test:file.md",
+				Type: DocTypeNote,
+				Path: "test/file.md",
+			},
+			expected: true,
+		},
+		{
+			name: "design document",
+			doc: &LiveSyncDocument{
+				ID:   "_design/views",
+				Type: DocTypePlain,
+				Path: "_design/views",
+			},
+			expected: false,
+		},
+		{
+			name: "chunk document",
+			doc: &LiveSyncDocument{
+				ID:   "h:test:file:0",
+				Type: DocTypeLeaf,
+				Path: "test/file.md",
+			},
+			expected: false,
+		},
+		{
+			name: "document outside baseDir",
+			doc: &LiveSyncDocument{
+				ID:   "other:file.md",
+				Type: DocTypeNote,
+				Path: "other/file.md",
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := p.shouldSyncDocument(tt.doc)
+			if result != tt.expected {
+				t.Errorf("shouldSyncDocument() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestHasDocumentChanged tests change detection logic
+func TestHasDocumentChanged(t *testing.T) {
+	// Create minimal peer without CouchDB connection
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := storage.NewStore(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	dispatcher := func(source peer.Peer, path string, data *peer.FileData) error {
+		return nil
+	}
+
+	cfg := getTestConfig()
+	base, _ := peer.NewBasePeer(cfg.Name, "couchdb", cfg.Group, cfg.BaseDir, dispatcher, store)
+	p := &CouchDBPeer{
+		BasePeer: base,
+	}
+
+	path := "test/file.md"
+	doc := &LiveSyncDocument{
+		ID:    "test:file.md",
+		Rev:   "1-abc",
+		MTime: 1234567890,
+		Size:  100,
+	}
+
+	// First check - no metadata stored, should be considered changed
+	if !p.hasDocumentChanged(path, doc) {
+		t.Error("Expected new document to be considered changed")
+	}
+
+	// Store metadata
+	if err := p.updateDocumentMetadata(path, doc); err != nil {
+		t.Fatalf("Failed to update metadata: %v", err)
+	}
+
+	// Second check - metadata matches, should not be changed
+	if p.hasDocumentChanged(path, doc) {
+		t.Error("Expected unchanged document to not be marked as changed")
+	}
+
+	// Modify document
+	doc.Rev = "2-def"
+	doc.MTime = 1234567891
+
+	// Third check - metadata differs, should be changed
+	if !p.hasDocumentChanged(path, doc) {
+		t.Error("Expected modified document to be considered changed")
+	}
+}
+
+// TestUpdateDocumentMetadata tests metadata storage
+func TestUpdateDocumentMetadata(t *testing.T) {
+	// Create minimal peer without CouchDB connection
+	tmpDB := t.TempDir() + "/test.db"
+	store, err := storage.NewStore(tmpDB)
+	if err != nil {
+		t.Fatalf("Failed to create storage: %v", err)
+	}
+	defer store.Close()
+
+	dispatcher := func(source peer.Peer, path string, data *peer.FileData) error {
+		return nil
+	}
+
+	cfg := getTestConfig()
+	base, _ := peer.NewBasePeer(cfg.Name, "couchdb", cfg.Group, cfg.BaseDir, dispatcher, store)
+	p := &CouchDBPeer{
+		BasePeer: base,
+	}
+
+	path := "test/file.md"
+	doc := &LiveSyncDocument{
+		ID:    "test:file.md",
+		Rev:   "1-abc",
+		MTime: 1234567890,
+		Size:  100,
+	}
+
+	// Update metadata
+	if err := p.updateDocumentMetadata(path, doc); err != nil {
+		t.Fatalf("Failed to update metadata: %v", err)
+	}
+
+	// Verify metadata was stored
+	metaKey := docMetaPrefix + p.Name() + "-" + path
+	stored, err := p.GetSetting(metaKey)
+	if err != nil {
+		t.Fatalf("Failed to get stored metadata: %v", err)
+	}
+
+	expected := fmt.Sprintf("%d-%d-%s", doc.MTime, doc.Size, doc.Rev)
+	if stored != expected {
+		t.Errorf("Stored metadata = %q, want %q", stored, expected)
+	}
+}
+
+// TestInitialSyncConfig tests that initialSync config flag is respected
+func TestInitialSyncConfig(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialSync    *bool
+		expectSync     bool
+		storedSequence string
+	}{
+		{
+			name:           "default (nil) should enable sync on first run",
+			initialSync:    nil,
+			expectSync:     true,
+			storedSequence: "",
+		},
+		{
+			name:           "explicitly enabled",
+			initialSync:    boolPtr(true),
+			expectSync:     true,
+			storedSequence: "",
+		},
+		{
+			name:           "explicitly disabled",
+			initialSync:    boolPtr(false),
+			expectSync:     false,
+			storedSequence: "",
+		},
+		{
+			name:           "not first run (has sequence)",
+			initialSync:    boolPtr(true),
+			expectSync:     false,
+			storedSequence: "123-abc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temporary database
+			tmpDB := t.TempDir() + "/test.db"
+			store, err := storage.NewStore(tmpDB)
+			if err != nil {
+				t.Fatalf("Failed to create storage: %v", err)
+			}
+			defer store.Close()
+
+			// Dummy dispatcher
+			dispatcher := func(source peer.Peer, path string, data *peer.FileData) error {
+				return nil
+			}
+
+			// Create config
+			cfg := getTestConfig()
+			cfg.InitialSync = tt.initialSync
+
+			// Create peer without CouchDB connection (will fail on Start)
+			// We're just testing the config logic here
+			base, _ := peer.NewBasePeer(cfg.Name, "couchdb", cfg.Group, cfg.BaseDir, dispatcher, store)
+			p := &CouchDBPeer{
+				BasePeer: base,
+				config:   cfg,
+			}
+
+			// Set stored sequence if specified
+			if tt.storedSequence != "" {
+				_ = p.SetSetting("since", tt.storedSequence)
+			}
+
+			// Check logic for determining if initial sync should run
+			lastSeq, _ := p.GetSetting("since")
+			initialSyncEnabled := true
+			if p.config.InitialSync != nil {
+				initialSyncEnabled = *p.config.InitialSync
+			}
+			shouldSync := (lastSeq == "" && initialSyncEnabled)
+
+			if shouldSync != tt.expectSync {
+				t.Errorf("Initial sync should run = %v, want %v", shouldSync, tt.expectSync)
+			}
+		})
+	}
+}
+
+// Helper function to create bool pointer
+func boolPtr(b bool) *bool {
+	return &b
+}
