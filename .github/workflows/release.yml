@@ -85,6 +85,7 @@ jobs:
       - name: Upload binaries to release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
           files: |
             bin/livesync-bridge-linux-amd64
             bin/livesync-bridge-linux-arm64
