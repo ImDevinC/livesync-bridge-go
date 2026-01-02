@@ -1,0 +1,18 @@
+{
+    "peers": [
+        {
+            "type": "storage",
+            "name": "vault1",
+            "group": "test",
+            "baseDir": "./test-data/vault1",
+            "scanOfflineChanges": true
+        },
+        {
+            "type": "storage",
+            "name": "vault2",
+            "group": "test",
+            "baseDir": "./test-data/vault2",
+            "scanOfflineChanges": true
+        }
+    ]
+}

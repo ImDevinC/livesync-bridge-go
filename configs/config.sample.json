@@ -1,0 +1,25 @@
+{
+    "peers": [
+        {
+            "type": "couchdb",
+            "name": "vault-main",
+            "group": "main",
+            "database": "livesync",
+            "username": "admin",
+            "password": "password",
+            "url": "http://localhost:5984",
+            "passphrase": "your-encryption-passphrase",
+            "baseDir": "shared/",
+            "customChunkSize": 100,
+            "minimumChunkSize": 20,
+            "enableCompression": true
+        },
+        {
+            "type": "storage",
+            "name": "local-vault",
+            "group": "main",
+            "baseDir": "./vault/",
+            "scanOfflineChanges": true
+        }
+    ]
+}

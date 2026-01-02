@@ -1,0 +1,51 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# Test data and runtime data
+data/
+test-data/
+*.db
+
+# Original TypeScript source (not part of Go port)
+source/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS specific
+Thumbs.db
+.Trash-*
+
+# Local configuration (users should use XDG defaults or custom paths)
+/configs/config.json
+!/configs/*.sample.json
+!/configs/*-config.json
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/

@@ -1,0 +1,29 @@
+{
+  "peers": [
+    {
+      "type": "storage",
+      "name": "local-vault",
+      "group": "sync",
+      "baseDir": "./test-data/vault1"
+    },
+    {
+      "type": "storage",
+      "name": "local-vault2",
+      "group": "sync",
+      "baseDir": "./test-data/vault2"
+    },
+    {
+      "type": "couchdb",
+      "name": "remote-sync",
+      "group": "sync",
+      "url": "http://localhost:5984",
+      "username": "admin",
+      "password": "password",
+      "database": "test_vault",
+      "passphrase": "test-encryption-key",
+      "baseDir": "",
+      "enableCompression": true,
+      "customChunkSize": 102400
+    }
+  ]
+}
