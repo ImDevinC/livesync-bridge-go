@@ -3,6 +3,7 @@ package storagepeer
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -282,7 +283,12 @@ func TestStoragePeerWatching(t *testing.T) {
 	}
 
 	// Give watcher time to initialize
-	time.Sleep(100 * time.Millisecond)
+	// macOS FSEvents can be slower than Linux inotify
+	initWait := 100 * time.Millisecond
+	if runtime.GOOS == "darwin" {
+		initWait = 250 * time.Millisecond
+	}
+	time.Sleep(initWait)
 
 	// Create a file directly on filesystem
 	testFile := filepath.Join(dir, "watched.txt")
@@ -292,7 +298,12 @@ func TestStoragePeerWatching(t *testing.T) {
 	}
 
 	// Wait for debounce + processing
-	time.Sleep(500 * time.Millisecond)
+	// macOS FSEvents needs more time than Linux inotify
+	processWait := 500 * time.Millisecond
+	if runtime.GOOS == "darwin" {
+		processWait = 1000 * time.Millisecond
+	}
+	time.Sleep(processWait)
 
 	// Check if file change was dispatched
 	if mock.callCount() == 0 {
@@ -434,7 +445,11 @@ func TestStoragePeerHiddenFiles(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	initWait := 100 * time.Millisecond
+	if runtime.GOOS == "darwin" {
+		initWait = 250 * time.Millisecond
+	}
+	time.Sleep(initWait)
 
 	// Create a hidden file
 	hiddenFile := filepath.Join(dir, ".hidden.txt")
@@ -443,7 +458,11 @@ func TestStoragePeerHiddenFiles(t *testing.T) {
 	}
 
 	// Wait for potential dispatch
-	time.Sleep(500 * time.Millisecond)
+	processWait := 500 * time.Millisecond
+	if runtime.GOOS == "darwin" {
+		processWait = 1000 * time.Millisecond
+	}
+	time.Sleep(processWait)
 
 	// Should not have dispatched hidden file
 	if mock.callCount() > 0 {
