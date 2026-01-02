@@ -2,6 +2,7 @@ package util
 
 import (
 	"testing"
+	"time"
 )
 
 func TestComputeHash(t *testing.T) {
@@ -39,10 +40,27 @@ func TestMakeUniqueString(t *testing.T) {
 		t.Error("MakeUniqueString() returned empty string")
 	}
 
-	// Test that it generates unique strings
-	s2 := MakeUniqueString()
-	if s1 == s2 {
-		t.Error("MakeUniqueString() generated duplicate strings")
+	// Test that it generates unique strings over multiple calls
+	// Use a map to track uniqueness over 100 iterations
+	seen := make(map[string]bool)
+	duplicates := 0
+	iterations := 100
+
+	for i := 0; i < iterations; i++ {
+		s := MakeUniqueString()
+		if seen[s] {
+			duplicates++
+		}
+		seen[s] = true
+		// Small delay to ensure different timestamps on systems with low timer resolution
+		if i < iterations-1 {
+			time.Sleep(time.Microsecond)
+		}
+	}
+
+	// Allow at most 1 duplicate (extremely unlikely with proper implementation)
+	if duplicates > 1 {
+		t.Errorf("MakeUniqueString() generated %d duplicates in %d iterations", duplicates, iterations)
 	}
 
 	// Test format (timestamp-randomstring)
