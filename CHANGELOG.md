@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.3...v1.0.4) (2026-01-02)
+
+### Bug Fixes
+
+* **ci:** auto-trigger release workflow after version ([ba07720](https://github.com/ImDevinC/livesync-bridge-go/commit/ba077205cd35e968962daf1f8210dbf23010fd45))
+
 ## [1.0.3](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.2...v1.0.3) (2026-01-02)
 
 ### Bug Fixes
