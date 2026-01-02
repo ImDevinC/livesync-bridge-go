@@ -217,3 +217,81 @@ func TestStorePersistence(t *testing.T) {
 		t.Errorf("Expected 'value1', got '%s'", value)
 	}
 }
+
+func TestStoreIteratePrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Set up test data
+	store.Set("file-stat-a.txt", "100-200")
+	store.Set("file-stat-b.txt", "300-400")
+	store.Set("file-stat-c.txt", "500-600")
+	store.Set("other-key", "other-value")
+	store.Set("file-data-x.txt", "data")
+
+	// Test iterating with "file-stat-" prefix
+	collected := make(map[string]string)
+	err = store.IteratePrefix("file-stat-", func(key, value string) error {
+		collected[key] = value
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("IteratePrefix failed: %v", err)
+	}
+
+	// Should only get keys with file-stat- prefix
+	if len(collected) != 3 {
+		t.Errorf("Expected 3 keys with prefix, got %d", len(collected))
+	}
+
+	if collected["file-stat-a.txt"] != "100-200" {
+		t.Errorf("Expected '100-200', got '%s'", collected["file-stat-a.txt"])
+	}
+	if collected["file-stat-b.txt"] != "300-400" {
+		t.Errorf("Expected '300-400', got '%s'", collected["file-stat-b.txt"])
+	}
+	if collected["file-stat-c.txt"] != "500-600" {
+		t.Errorf("Expected '500-600', got '%s'", collected["file-stat-c.txt"])
+	}
+
+	// Should not include other keys
+	if _, exists := collected["other-key"]; exists {
+		t.Error("Should not include 'other-key'")
+	}
+	if _, exists := collected["file-data-x.txt"]; exists {
+		t.Error("Should not include 'file-data-x.txt'")
+	}
+}
+
+func TestStoreIteratePrefixEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// No keys with the prefix
+	store.Set("other-key", "value")
+
+	count := 0
+	err = store.IteratePrefix("file-stat-", func(key, value string) error {
+		count++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("IteratePrefix failed: %v", err)
+	}
+
+	if count != 0 {
+		t.Errorf("Expected 0 iterations, got %d", count)
+	}
+}

@@ -111,6 +111,12 @@ func (sp *StoragePeer) Start() error {
 			return
 		}
 
+		// Scan for offline deletions
+		if err := sp.scanOfflineDeletions(sp.Context()); err != nil {
+			startErr = fmt.Errorf("failed to scan offline deletions: %w", err)
+			return
+		}
+
 		// Start watching directory tree
 		if err := sp.watchDirectoryTree(sp.rootDir); err != nil {
 			startErr = fmt.Errorf("failed to watch directory: %w", err)
@@ -509,6 +515,62 @@ func (sp *StoragePeer) scanOfflineChanges(ctx context.Context) error {
 	}
 
 	sp.LogInfo("Offline scan complete", "changed", changeCount)
+	return nil
+}
+
+// scanOfflineDeletions detects files that were deleted while offline
+func (sp *StoragePeer) scanOfflineDeletions(ctx context.Context) error {
+	sp.LogInfo("Scanning for offline deletions")
+
+	deletionCount := 0
+
+	// Collect paths to delete (don't modify storage during iteration)
+	var pathsToDelete []string
+
+	// Build the full prefix including peer namespace
+	// Keys are stored as: {name}-{type}-{baseDir}-{key}
+	// For storage peer, baseDir is empty, so it's: {name}-{type}--{key}
+	// We need to iterate with the full peer prefix + file-stat-
+	fullPrefix := fmt.Sprintf("%s-%s--%s", sp.Name(), sp.Type(), fileStatPrefix)
+
+	// Iterate all stored file stats to find deleted files
+	err := sp.Store().IteratePrefix(fullPrefix, func(key, value string) error {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Extract local path from key (remove the full peer prefix)
+		// Key format: {name}-{type}--file-stat-{localPath}
+		localPath := strings.TrimPrefix(key, fullPrefix)
+		storagePath := filepath.Join(sp.rootDir, localPath)
+
+		// Check if file still exists
+		if _, err := os.Stat(storagePath); os.IsNotExist(err) {
+			// File was deleted while offline
+			pathsToDelete = append(pathsToDelete, localPath)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to scan for deletions: %w", err)
+	}
+
+	// Now process the deletions
+	for _, localPath := range pathsToDelete {
+		globalPath := sp.ToGlobalPath(localPath)
+		sp.LogDebug("Detected offline deletion", "path", globalPath)
+
+		// Dispatch deletion
+		sp.dispatchDeletion(globalPath)
+		deletionCount++
+	}
+
+	sp.LogInfo("Offline deletion scan complete", "deleted", deletionCount)
 	return nil
 }
 

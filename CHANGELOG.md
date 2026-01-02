@@ -11,6 +11,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Deletion detection during offline periods
+  - Storage peers now detect files deleted while the bridge was offline on startup
+  - CouchDB peers now detect documents deleted while the bridge was offline during initial sync
+  - New `IteratePrefix` method in storage layer for efficient prefix-based iteration
+  - Document sync tracking in CouchDB peers to identify deletions across bridge restarts
 - Initial sync support for CouchDB peers
   - Automatically syncs existing documents on first run when no sync sequence is stored
   - Configurable via `initialSync` option in peer configuration (default: `true`)
@@ -18,6 +23,11 @@ All notable changes to this project will be documented in this file.
   - Progress logging for visibility during sync of large vaults
   - Metadata tracking to avoid re-syncing unchanged documents on subsequent starts
 - New `AllDocsIterator` method in CouchDB client for memory-efficient document streaming
+
+### Fixed
+- Storage peer now properly syncs file deletions that occurred while bridge was offline
+- CouchDB peer now properly syncs document deletions that occurred while bridge was offline
+- Deletion metadata is now cleaned up properly when documents are deleted via changes feed
 
 ### Changed
 - CouchDB peer now syncs existing documents on first startup instead of only monitoring new changes
