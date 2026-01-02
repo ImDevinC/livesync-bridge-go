@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.5](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.4...v1.0.5) (2026-01-02)
+
+### Bug Fixes
+
+* **storagepeer:** add parameter labels to logging calls ([d3488f1](https://github.com/ImDevinC/livesync-bridge-go/commit/d3488f1fea8e98564f6a9b60b92c08d62e1192ee))
+
 ## [1.0.4](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.3...v1.0.4) (2026-01-02)
 
 ### Bug Fixes
