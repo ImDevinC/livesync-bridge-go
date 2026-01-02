@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +40,7 @@ func createTempStore(t *testing.T) *storage.Store {
 // Mock dispatcher for testing
 type mockDispatcher struct {
 	calls []dispatchCall
+	mu    sync.Mutex
 }
 
 type dispatchCall struct {
@@ -48,16 +50,31 @@ type dispatchCall struct {
 }
 
 func (md *mockDispatcher) dispatch(source peer.Peer, path string, data *peer.FileData) error {
+	md.mu.Lock()
+	defer md.mu.Unlock()
 	md.calls = append(md.calls, dispatchCall{source, path, data})
 	return nil
 }
 
 func (md *mockDispatcher) reset() {
+	md.mu.Lock()
+	defer md.mu.Unlock()
 	md.calls = nil
 }
 
 func (md *mockDispatcher) callCount() int {
+	md.mu.Lock()
+	defer md.mu.Unlock()
 	return len(md.calls)
+}
+
+func (md *mockDispatcher) getCall(index int) dispatchCall {
+	md.mu.Lock()
+	defer md.mu.Unlock()
+	if index < len(md.calls) {
+		return md.calls[index]
+	}
+	return dispatchCall{}
 }
 
 // TestNewStoragePeer tests creating a new storage peer
@@ -312,7 +329,7 @@ func TestStoragePeerWatching(t *testing.T) {
 
 	// Verify the dispatched data
 	if mock.callCount() > 0 {
-		call := mock.calls[0]
+		call := mock.getCall(0)
 		if call.path != "watched.txt" {
 			t.Errorf("Expected path 'watched.txt', got '%s'", call.path)
 		}
