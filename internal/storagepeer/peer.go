@@ -200,7 +200,7 @@ func (sp *StoragePeer) Delete(path string) (bool, error) {
 	localPath := sp.ToLocalPath(path)
 	storagePath := filepath.Join(sp.rootDir, localPath)
 
-	sp.LogReceive("deletion", path)
+	sp.LogReceive("deletion", "path", path)
 
 	// Check if repeating
 	if sp.IsRepeating(path, nil) {
@@ -441,7 +441,7 @@ func (sp *StoragePeer) dispatchDeletion(globalPath string) {
 		return
 	}
 
-	sp.LogSend("deletion", globalPath)
+	sp.LogSend("deletion", "path", globalPath)
 
 	// Remove file stat
 	localPath := sp.ToLocalPath(globalPath)
