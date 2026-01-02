@@ -39,10 +39,24 @@ jobs:
             conventional-changelog-conventionalcommits@8
 
       - name: Run semantic-release
+        id: semantic_release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
-        run: semantic-release
+        run: |
+          semantic-release
+          # Capture the new version if a release was created
+          NEW_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Trigger release workflow
+        if: steps.semantic_release.outputs.new_version != ''
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          echo "New version ${{ steps.semantic_release.outputs.new_version }} was released"
+          echo "Triggering release workflow to build binaries..."
+          gh workflow run release.yml -f tag=${{ steps.semantic_release.outputs.new_version }}
