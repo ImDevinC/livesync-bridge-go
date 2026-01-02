@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Initial sync support for CouchDB peers
+  - Automatically syncs existing documents on first run when no sync sequence is stored
+  - Configurable via `initialSync` option in peer configuration (default: `true`)
+  - Bidirectional sync based on modification time comparison
+  - Progress logging for visibility during sync of large vaults
+  - Metadata tracking to avoid re-syncing unchanged documents on subsequent starts
+- New `AllDocsIterator` method in CouchDB client for memory-efficient document streaming
+
+### Changed
+- CouchDB peer now syncs existing documents on first startup instead of only monitoring new changes
+- Sample configuration updated to include `initialSync` option
+
 ## [1.0.5](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.4...v1.0.5) (2026-01-02)
 
 ### Bug Fixes

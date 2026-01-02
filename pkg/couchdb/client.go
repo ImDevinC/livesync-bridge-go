@@ -214,6 +214,55 @@ func (c *Client) AllDocs(ctx context.Context, prefix string) ([]*Document, error
 	return docs, nil
 }
 
+// AllDocsIterator returns a channel that streams documents for efficient processing
+func (c *Client) AllDocsIterator(ctx context.Context, prefix string, batchSize int) (<-chan map[string]interface{}, <-chan error) {
+	docChan := make(chan map[string]interface{}, batchSize)
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer close(docChan)
+		defer close(errChan)
+
+		// Build options map
+		optsMap := map[string]interface{}{
+			"include_docs": true,
+		}
+
+		// If prefix provided, use startkey/endkey range query
+		if prefix != "" {
+			optsMap["startkey"] = prefix
+			optsMap["endkey"] = prefix + "\ufff0" // High Unicode character for range end
+		}
+
+		rows := c.db.AllDocs(ctx, kivik.Params(optsMap))
+		if rows.Err() != nil {
+			errChan <- fmt.Errorf("failed to query all docs: %w", rows.Err())
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var doc map[string]interface{}
+			if err := rows.ScanDoc(&doc); err != nil {
+				errChan <- fmt.Errorf("failed to scan document: %w", err)
+				return
+			}
+
+			select {
+			case docChan <- doc:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		if rows.Err() != nil {
+			errChan <- fmt.Errorf("error iterating documents: %w", rows.Err())
+		}
+	}()
+
+	return docChan, errChan
+}
+
 // BulkDocs performs bulk document operations
 func (c *Client) BulkDocs(ctx context.Context, docs []interface{}) ([]BulkResult, error) {
 	// BulkDocs returns []kivik.BulkResult directly in Kivik v4

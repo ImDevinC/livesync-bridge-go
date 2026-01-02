@@ -45,6 +45,7 @@ type PeerCouchDBConf struct {
 	BaseDir             string `json:"baseDir"`
 	UseRemoteTweaks     *bool  `json:"useRemoteTweaks,omitempty"` // Deferred feature
 	EnableCompression   *bool  `json:"enableCompression,omitempty"`
+	InitialSync         *bool  `json:"initialSync,omitempty"` // Sync existing documents on first run
 }
 
 func (p PeerCouchDBConf) GetType() string    { return p.Type }

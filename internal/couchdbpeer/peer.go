@@ -76,6 +76,9 @@ const (
 	DocTypeNote  = "newnote"
 	DocTypePlain = "plain"
 	DocTypeLeaf  = "leaf"
+
+	// Settings keys
+	docMetaPrefix = "doc-meta-"
 )
 
 // NewCouchDBPeer creates a new CouchDB peer
@@ -127,6 +130,165 @@ func (p *CouchDBPeer) Type() string {
 	return "couchdb"
 }
 
+// shouldSyncDocument checks if a document should be synced based on filters
+func (p *CouchDBPeer) shouldSyncDocument(doc *LiveSyncDocument) bool {
+	// Skip design documents
+	if strings.HasPrefix(doc.ID, "_design/") {
+		return false
+	}
+
+	// Skip chunk documents
+	if doc.Type == DocTypeLeaf {
+		return false
+	}
+
+	// Check baseDir filter
+	if p.baseDir != "" && !strings.HasPrefix(doc.Path, p.baseDir) {
+		return false
+	}
+
+	return true
+}
+
+// hasDocumentChanged checks if a document has changed since last sync
+func (p *CouchDBPeer) hasDocumentChanged(path string, doc *LiveSyncDocument) bool {
+	// Get stored metadata
+	metaKey := docMetaPrefix + p.Name() + "-" + path
+	storedMeta, err := p.GetSetting(metaKey)
+	if err != nil || storedMeta == "" {
+		// No stored metadata, consider it new
+		return true
+	}
+
+	// Current metadata: mtime-size-rev
+	currentMeta := fmt.Sprintf("%d-%d-%s", doc.MTime, doc.Size, doc.Rev)
+
+	return storedMeta != currentMeta
+}
+
+// updateDocumentMetadata stores document metadata for change tracking
+func (p *CouchDBPeer) updateDocumentMetadata(path string, doc *LiveSyncDocument) error {
+	metaKey := docMetaPrefix + p.Name() + "-" + path
+	meta := fmt.Sprintf("%d-%d-%s", doc.MTime, doc.Size, doc.Rev)
+	return p.SetSetting(metaKey, meta)
+}
+
+// scanInitialDocuments performs initial sync of existing CouchDB documents
+func (p *CouchDBPeer) scanInitialDocuments(ctx context.Context) error {
+	p.LogInfo("Scanning CouchDB for existing documents")
+
+	var totalDocs, newDocs, updatedDocs, skippedDocs int
+	const progressInterval = 50 // Log progress every N documents
+
+	// Use streaming iterator for memory efficiency
+	docChan, errChan := p.client.AllDocsIterator(ctx, "", 100)
+
+	for {
+		select {
+		case doc, ok := <-docChan:
+			if !ok {
+				// Channel closed, we're done
+				p.LogInfo("Initial sync completed",
+					"total", totalDocs,
+					"new", newDocs,
+					"updated", updatedDocs,
+					"skipped", skippedDocs,
+				)
+				return nil
+			}
+
+			totalDocs++
+
+			// Parse as LiveSyncDocument
+			docJSON, err := json.Marshal(doc)
+			if err != nil {
+				p.LogDebug("Failed to marshal document", "error", err)
+				continue
+			}
+
+			var lsDoc LiveSyncDocument
+			if err := json.Unmarshal(docJSON, &lsDoc); err != nil {
+				p.LogDebug("Failed to parse document", "error", err)
+				continue
+			}
+
+			// Apply filters
+			if !p.shouldSyncDocument(&lsDoc) {
+				skippedDocs++
+				continue
+			}
+
+			// Convert to global path
+			globalPath := p.ToGlobalPath(lsDoc.Path)
+
+			// Check if document changed
+			if !p.hasDocumentChanged(globalPath, &lsDoc) {
+				skippedDocs++
+				continue
+			}
+
+			// Convert document to data
+			data, err := p.documentToData(&lsDoc)
+			if err != nil {
+				p.LogWarn("Failed to convert document", "path", globalPath, "error", err)
+				skippedDocs++
+				continue
+			}
+
+			// Create FileData
+			fileData := &peer.FileData{
+				CTime:   time.Unix(lsDoc.CTime, 0),
+				MTime:   time.Unix(lsDoc.MTime, 0),
+				Size:    int64(lsDoc.Size),
+				Data:    data,
+				Deleted: lsDoc.Deleted,
+			}
+
+			// Dispatch to hub (but don't echo back to ourselves)
+			if !p.IsRepeating(globalPath, fileData) {
+				if err := p.DispatchFrom(p, globalPath, fileData); err != nil {
+					p.LogWarn("Failed to dispatch document", "path", globalPath, "error", err)
+					continue
+				}
+
+				// Mark as processed and update metadata
+				p.MarkProcessed(globalPath, fileData)
+				if err := p.updateDocumentMetadata(globalPath, &lsDoc); err != nil {
+					p.LogWarn("Failed to update metadata", "path", globalPath, "error", err)
+				}
+
+				// Determine if new or updated based on metadata existence
+				if storedMeta, _ := p.GetSetting(docMetaPrefix + p.Name() + "-" + globalPath); storedMeta == "" {
+					newDocs++
+				} else {
+					updatedDocs++
+				}
+			} else {
+				skippedDocs++
+			}
+
+			// Log progress
+			if totalDocs%progressInterval == 0 {
+				p.LogInfo("Initial sync progress",
+					"processed", totalDocs,
+					"new", newDocs,
+					"updated", updatedDocs,
+					"skipped", skippedDocs,
+				)
+			}
+
+		case err := <-errChan:
+			if err != nil {
+				return fmt.Errorf("error during initial sync: %w", err)
+			}
+
+		case <-ctx.Done():
+			p.LogInfo("Initial sync cancelled")
+			return ctx.Err()
+		}
+	}
+}
+
 // Start begins monitoring the CouchDB changes feed
 func (p *CouchDBPeer) Start() error {
 	ctx, cancel := context.WithCancel(p.Context())
@@ -136,6 +298,29 @@ func (p *CouchDBPeer) Start() error {
 
 	// Get last known sequence from storage
 	lastSeq, _ := p.GetSetting("since")
+
+	// Check if initial sync is needed and enabled
+	initialSyncEnabled := true
+	if p.config.InitialSync != nil {
+		initialSyncEnabled = *p.config.InitialSync
+	}
+
+	// Perform initial sync if:
+	// 1. No stored sequence (first run)
+	// 2. InitialSync is enabled in config (default: true)
+	if lastSeq == "" && initialSyncEnabled {
+		p.LogInfo("Performing initial sync of existing documents")
+		if err := p.scanInitialDocuments(ctx); err != nil {
+			p.LogError("Initial sync failed", "error", err)
+			return fmt.Errorf("initial sync failed: %w", err)
+		}
+		p.LogInfo("Initial sync completed successfully")
+
+		// Set sequence to "now" after successful initial sync
+		lastSeq = "now"
+		_ = p.SetSetting("since", lastSeq)
+	}
+
 	if lastSeq == "" {
 		lastSeq = "now"
 	}

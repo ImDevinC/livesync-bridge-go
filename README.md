@@ -38,6 +38,7 @@ It enables multi-directional synchronization between any combination of peers, w
 - Folder-based selective synchronization
 - Path obfuscation
 - File change detection and processing
+- Initial sync of existing files on first startup
 
 ## Why Port to Go?
 

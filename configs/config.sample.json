@@ -12,7 +12,8 @@
             "baseDir": "shared/",
             "customChunkSize": 100,
             "minimumChunkSize": 20,
-            "enableCompression": true
+            "enableCompression": true,
+            "initialSync": true
         },
         {
             "type": "storage",
