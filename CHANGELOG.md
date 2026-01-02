@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.5...v1.1.0) (2026-01-02)
+
+### Features
+
+* add initial sync support for CouchDB peers ([7599123](https://github.com/ImDevinC/livesync-bridge-go/commit/75991230dea2e4eaa8dc5fb608e77425455f2d36))
+
 ## [Unreleased]
 
 ### Added
