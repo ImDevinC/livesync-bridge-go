@@ -1,5 +1,10 @@
 # LiveSync Bridge - Go Port Project
 
+[![CI](https://github.com/ImDevinC/livesync-bridge-go/actions/workflows/ci.yml/badge.svg)](https://github.com/ImDevinC/livesync-bridge-go/actions/workflows/ci.yml)
+[![Release](https://github.com/ImDevinC/livesync-bridge-go/actions/workflows/release.yml/badge.svg)](https://github.com/ImDevinC/livesync-bridge-go/actions/workflows/release.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/imdevinc/livesync-bridge-go)](https://goreportcard.com/report/github.com/imdevinc/livesync-bridge-go)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 This project is a Go-compatible reimplementation of [livesync-bridge](https://github.com/vrtmrz/livesync-bridge), which is currently written in TypeScript/Deno.
 
 ## Project Status
@@ -122,6 +127,47 @@ The original Deno project consists of:
 - [ ] Docker container packaging
 
 ## Getting Started
+
+### Installation
+
+#### Download Pre-built Binary (Recommended)
+
+Download the latest release from the [Releases page](https://github.com/ImDevinC/livesync-bridge-go/releases).
+
+**Linux:**
+```bash
+# AMD64
+wget https://github.com/ImDevinC/livesync-bridge-go/releases/latest/download/livesync-bridge-linux-amd64
+chmod +x livesync-bridge-linux-amd64
+sudo mv livesync-bridge-linux-amd64 /usr/local/bin/livesync-bridge
+
+# ARM64
+wget https://github.com/ImDevinC/livesync-bridge-go/releases/latest/download/livesync-bridge-linux-arm64
+chmod +x livesync-bridge-linux-arm64
+sudo mv livesync-bridge-linux-arm64 /usr/local/bin/livesync-bridge
+```
+
+**macOS:**
+```bash
+# Intel
+wget https://github.com/ImDevinC/livesync-bridge-go/releases/latest/download/livesync-bridge-darwin-amd64
+chmod +x livesync-bridge-darwin-amd64
+sudo mv livesync-bridge-darwin-amd64 /usr/local/bin/livesync-bridge
+
+# Apple Silicon
+wget https://github.com/ImDevinC/livesync-bridge-go/releases/latest/download/livesync-bridge-darwin-arm64
+chmod +x livesync-bridge-darwin-arm64
+sudo mv livesync-bridge-darwin-arm64 /usr/local/bin/livesync-bridge
+```
+
+**Windows:**
+Download the `.exe` file for your architecture and add it to your PATH.
+
+#### Build from Source
+
+```bash
+go build -o bin/livesync-bridge ./cmd/livesync-bridge
+```
 
 ### Default Paths
 

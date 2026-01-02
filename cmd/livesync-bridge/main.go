@@ -23,12 +23,24 @@ const (
 	envDBKey     = "LSB_DATA"
 )
 
+var (
+	// version is set via ldflags during build
+	version = "dev"
+)
+
 func main() {
 	// Parse CLI flags
 	configPath := flag.String("config", "", "Path to configuration file (overrides default)")
 	dbPath := flag.String("db", "", "Path to database file (overrides default)")
 	reset := flag.Bool("reset", false, "Reset persistent storage (clear all state)")
+	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
+
+	// Handle version flag
+	if *showVersion {
+		fmt.Printf("livesync-bridge version %s\n", version)
+		os.Exit(0)
+	}
 
 	// Determine config file path with precedence: CLI flag > env var > XDG default
 	finalConfigPath := *configPath

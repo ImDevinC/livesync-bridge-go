@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Run tests
+        run: go test ./... -v
+
+      - name: Build binaries
+        run: |
+          # Linux AMD64
+          GOOS=linux GOARCH=amd64 go build -o bin/livesync-bridge-linux-amd64 \
+            -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" \
+            ./cmd/livesync-bridge
+          
+          # Linux ARM64
+          GOOS=linux GOARCH=arm64 go build -o bin/livesync-bridge-linux-arm64 \
+            -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" \
+            ./cmd/livesync-bridge
+          
+          # macOS AMD64
+          GOOS=darwin GOARCH=amd64 go build -o bin/livesync-bridge-darwin-amd64 \
+            -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" \
+            ./cmd/livesync-bridge
+          
+          # macOS ARM64 (Apple Silicon)
+          GOOS=darwin GOARCH=arm64 go build -o bin/livesync-bridge-darwin-arm64 \
+            -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" \
+            ./cmd/livesync-bridge
+          
+          # Windows AMD64
+          GOOS=windows GOARCH=amd64 go build -o bin/livesync-bridge-windows-amd64.exe \
+            -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" \
+            ./cmd/livesync-bridge
+          
+          # Windows ARM64
+          GOOS=windows GOARCH=arm64 go build -o bin/livesync-bridge-windows-arm64.exe \
+            -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" \
+            ./cmd/livesync-bridge
+
+      - name: Create checksums
+        run: |
+          cd bin
+          sha256sum livesync-bridge-* > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            bin/livesync-bridge-linux-amd64
+            bin/livesync-bridge-linux-arm64
+            bin/livesync-bridge-darwin-amd64
+            bin/livesync-bridge-darwin-arm64
+            bin/livesync-bridge-windows-amd64.exe
+            bin/livesync-bridge-windows-arm64.exe
+            bin/checksums.txt
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## Installation
+            
+            Download the appropriate binary for your platform:
+            
+            ### Linux
+            ```bash
+            # AMD64
+            wget https://github.com/ImDevinC/livesync-bridge-go/releases/download/${{ steps.get_version.outputs.VERSION }}/livesync-bridge-linux-amd64
+            chmod +x livesync-bridge-linux-amd64
+            sudo mv livesync-bridge-linux-amd64 /usr/local/bin/livesync-bridge
+            
+            # ARM64
+            wget https://github.com/ImDevinC/livesync-bridge-go/releases/download/${{ steps.get_version.outputs.VERSION }}/livesync-bridge-linux-arm64
+            chmod +x livesync-bridge-linux-arm64
+            sudo mv livesync-bridge-linux-arm64 /usr/local/bin/livesync-bridge
+            ```
+            
+            ### macOS
+            ```bash
+            # Intel
+            wget https://github.com/ImDevinC/livesync-bridge-go/releases/download/${{ steps.get_version.outputs.VERSION }}/livesync-bridge-darwin-amd64
+            chmod +x livesync-bridge-darwin-amd64
+            sudo mv livesync-bridge-darwin-amd64 /usr/local/bin/livesync-bridge
+            
+            # Apple Silicon
+            wget https://github.com/ImDevinC/livesync-bridge-go/releases/download/${{ steps.get_version.outputs.VERSION }}/livesync-bridge-darwin-arm64
+            chmod +x livesync-bridge-darwin-arm64
+            sudo mv livesync-bridge-darwin-arm64 /usr/local/bin/livesync-bridge
+            ```
+            
+            ### Windows
+            Download the appropriate .exe file and add it to your PATH.
+            
+            ### Verify Checksums
+            ```bash
+            wget https://github.com/ImDevinC/livesync-bridge-go/releases/download/${{ steps.get_version.outputs.VERSION }}/checksums.txt
+            sha256sum -c checksums.txt
+            ```
+            
+            ## Usage
+            
+            ```bash
+            # Run with default XDG paths
+            livesync-bridge
+            
+            # Run with custom config
+            livesync-bridge --config /path/to/config.json
+            
+            # Show version
+            livesync-bridge --version
+            
+            # Show help
+            livesync-bridge --help
+            ```
+            
+            See [USAGE.md](https://github.com/ImDevinC/livesync-bridge-go/blob/main/USAGE.md) for detailed documentation.
