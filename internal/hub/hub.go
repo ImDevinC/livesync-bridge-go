@@ -127,7 +127,7 @@ func (h *Hub) Dispatch(source peer.Peer, path string, data *peer.FileData) error
 		var success bool
 		var err error
 
-		if data == nil {
+		if data == nil || (data != nil && data.Deleted) {
 			// Deletion
 			success, err = targetPeer.Delete(path)
 		} else {
@@ -145,7 +145,7 @@ func (h *Hub) Dispatch(source peer.Peer, path string, data *peer.FileData) error
 		} else if success {
 			dispatched++
 			operation := "updated"
-			if data == nil {
+			if data == nil || (data != nil && data.Deleted) {
 				operation = "deleted"
 			}
 			slog.Debug("Dispatched successfully",
