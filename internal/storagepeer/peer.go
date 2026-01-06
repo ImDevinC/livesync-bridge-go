@@ -175,6 +175,15 @@ func (sp *StoragePeer) Put(path string, data *peer.FileData) (bool, error) {
 		return false, nil
 	}
 
+	// Create parent directory first, removing any file conflicts in the path
+	dir := filepath.Dir(storagePath)
+	if err := sp.removeFileConflictsInParentPath(dir); err != nil {
+		return false, fmt.Errorf("failed to resolve parent path conflicts for %s: %w", dir, err)
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
 	// Check if path exists as a directory and remove it if so
 	removed, err := sp.removeDirectoryIfExists(storagePath)
 	if err != nil {
@@ -182,12 +191,6 @@ func (sp *StoragePeer) Put(path string, data *peer.FileData) (bool, error) {
 	}
 	if removed {
 		sp.LogInfo("Resolved directory conflict", "path", path)
-	}
-
-	// Create parent directory
-	dir := filepath.Dir(storagePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return false, fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
 	// Write file with retry logic
@@ -247,7 +250,13 @@ func (sp *StoragePeer) Delete(path string) (bool, error) {
 	sp.MarkProcessed(path, nil)
 
 	// Try to clean up empty parent directories
-	sp.cleanupEmptyDirs(filepath.Dir(storagePath))
+	// First ensure parent path is valid (no file conflicts)
+	parentDir := filepath.Dir(storagePath)
+	if err := sp.removeFileConflictsInParentPath(parentDir); err != nil {
+		sp.LogWarn("Failed to resolve parent path conflicts during cleanup", "path", parentDir, "error", err)
+		// Continue with operation even if parent path resolution fails
+	}
+	sp.cleanupEmptyDirs(parentDir)
 
 	return true, nil
 }
@@ -664,6 +673,75 @@ func (sp *StoragePeer) removeDirectoryIfExists(path string) (bool, error) {
 
 	sp.LogInfo("Removed directory due to path conflict", "path", path)
 	return true, nil
+}
+
+// removeFileConflictsInParentPath removes any file that blocks the creation
+// of a directory path. It walks from dirPath up towards rootDir, checking if
+// any path component exists as a file. If found, the file is removed along
+// with its file stat entry.
+// Returns nil if no conflicts exist or after successfully resolving a conflict.
+func (sp *StoragePeer) removeFileConflictsInParentPath(dirPath string) error {
+	// Validate inputs
+	if dirPath == "" || dirPath == sp.rootDir {
+		return nil
+	}
+
+	// Ensure dirPath is within rootDir
+	relPath, err := filepath.Rel(sp.rootDir, dirPath)
+	if err != nil {
+		return nil // Can't compute relative path, assume outside rootDir
+	}
+	if strings.HasPrefix(relPath, "..") {
+		return nil // Path is outside rootDir
+	}
+
+	// Build list of path components from root to target
+	components := []string{}
+	current := dirPath
+	for current != sp.rootDir && current != filepath.Dir(current) {
+		components = append([]string{current}, components...) // Prepend to get root-first order
+		current = filepath.Dir(current)
+	}
+
+	// Check each component from root towards target
+	for _, checkPath := range components {
+		info, err := os.Stat(checkPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Path doesn't exist yet, continue to next component
+				continue
+			}
+			// Some other error - if it's a "not a directory" error, a parent is blocking
+			// Continue checking parents to find the blocking file
+			continue
+		}
+
+		// If it's a directory, continue to next component
+		if info.IsDir() {
+			continue
+		}
+
+		// Found a file blocking the path - remove it
+		sp.LogWarn("Removing file to resolve parent path conflict", "path", checkPath)
+
+		// Remove the file
+		if err := os.Remove(checkPath); err != nil {
+			return fmt.Errorf("failed to remove blocking file %s: %w", checkPath, err)
+		}
+
+		// Clean up file stat entry
+		relToRoot, err := filepath.Rel(sp.rootDir, checkPath)
+		if err == nil {
+			if err := sp.DeleteSetting(fileStatPrefix + relToRoot); err != nil {
+				sp.LogDebug("Failed to delete file stat", "path", relToRoot, "error", err)
+			}
+		}
+
+		sp.LogInfo("Removed file blocking parent path", "path", checkPath)
+		return nil // Conflict resolved, no need to check further
+	}
+
+	return nil // No conflicts found
 }
 
 // cleanupDirectoryStats removes all file stat entries for files within a directory.
