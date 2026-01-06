@@ -694,10 +694,21 @@ func (p *CouchDBPeer) watchChanges(ctx context.Context, since string) {
 
 			// Handle deletion
 			if change.Deleted || lsDoc.Deleted {
+				// When a document is deleted, lsDoc.Path might be empty
+				// Reconstruct path from document ID
+				if globalPath == "" || globalPath == "/" {
+					// Convert document ID back to path (reverse of docPathToID)
+					docPath := strings.ReplaceAll(change.ID, ":", "/")
+					globalPath = p.ToGlobalPath(docPath)
+				}
+
 				p.LogInfo(fmt.Sprintf("Change detected: %s (deleted)", globalPath))
-				if !p.IsRepeating(globalPath, nil) {
-					p.DispatchFrom(p, globalPath, nil)
-					p.MarkProcessed(globalPath, nil)
+				fileData := &peer.FileData{
+					Deleted: true,
+				}
+				if !p.IsRepeating(globalPath, fileData) {
+					p.DispatchFrom(p, globalPath, fileData)
+					p.MarkProcessed(globalPath, fileData)
 
 					// Clean up metadata and sync tracking
 					_ = p.DeleteSetting(docMetaPrefix + p.Name() + "-" + globalPath)

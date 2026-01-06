@@ -405,3 +405,105 @@ func TestRegisterPeerFactory(t *testing.T) {
 		t.Error("Factory was not called")
 	}
 }
+
+func TestHubDispatchDeletionWithDeletedFlag(t *testing.T) {
+	store := createTestStore(t)
+	defer store.Close()
+
+	hub := NewHub(store)
+
+	peer1 := NewMockPeer("peer1", "storage", "main")
+	peer2 := NewMockPeer("peer2", "couchdb", "main")
+
+	hub.RegisterPeer(peer1)
+	hub.RegisterPeer(peer2)
+
+	// Dispatch deletion with FileData{Deleted: true}
+	deletionData := &peer.FileData{
+		Deleted: true,
+	}
+	err := hub.Dispatch(peer1, "document.md", deletionData)
+	if err != nil {
+		t.Fatalf("Dispatch failed: %v", err)
+	}
+
+	// Check peer2 received deletion (not put)
+	peer2Deletes := peer2.GetDeletes()
+	if len(peer2Deletes) != 1 || peer2Deletes[0] != "document.md" {
+		t.Errorf("Peer2 should have received deletion via Delete(), got deletes=%v", peer2Deletes)
+	}
+
+	// Ensure it was NOT dispatched as a Put
+	peer2Puts := peer2.GetPuts()
+	if len(peer2Puts) != 0 {
+		t.Errorf("Peer2 should not have received Put(), got puts=%v", peer2Puts)
+	}
+}
+
+func TestHubDispatchDeletionWithNil(t *testing.T) {
+	store := createTestStore(t)
+	defer store.Close()
+
+	hub := NewHub(store)
+
+	peer1 := NewMockPeer("peer1", "storage", "main")
+	peer2 := NewMockPeer("peer2", "couchdb", "main")
+
+	hub.RegisterPeer(peer1)
+	hub.RegisterPeer(peer2)
+
+	// Dispatch deletion with nil (original behavior)
+	err := hub.Dispatch(peer1, "document.md", nil)
+	if err != nil {
+		t.Fatalf("Dispatch failed: %v", err)
+	}
+
+	// Check peer2 received deletion
+	peer2Deletes := peer2.GetDeletes()
+	if len(peer2Deletes) != 1 || peer2Deletes[0] != "document.md" {
+		t.Errorf("Peer2 should have received deletion via Delete(), got deletes=%v", peer2Deletes)
+	}
+
+	// Ensure it was NOT dispatched as a Put
+	peer2Puts := peer2.GetPuts()
+	if len(peer2Puts) != 0 {
+		t.Errorf("Peer2 should not have received Put(), got puts=%v", peer2Puts)
+	}
+}
+
+func TestHubDispatchRegularFile(t *testing.T) {
+	store := createTestStore(t)
+	defer store.Close()
+
+	hub := NewHub(store)
+
+	peer1 := NewMockPeer("peer1", "storage", "main")
+	peer2 := NewMockPeer("peer2", "couchdb", "main")
+
+	hub.RegisterPeer(peer1)
+	hub.RegisterPeer(peer2)
+
+	// Dispatch regular file with Deleted=false
+	fileData := &peer.FileData{
+		MTime:   time.Now(),
+		Size:    100,
+		Data:    []byte("test content"),
+		Deleted: false,
+	}
+	err := hub.Dispatch(peer1, "document.md", fileData)
+	if err != nil {
+		t.Fatalf("Dispatch failed: %v", err)
+	}
+
+	// Check peer2 received it as a Put (not Delete)
+	peer2Puts := peer2.GetPuts()
+	if len(peer2Puts) != 1 || peer2Puts[0] != "document.md" {
+		t.Errorf("Peer2 should have received file via Put(), got puts=%v", peer2Puts)
+	}
+
+	// Ensure it was NOT dispatched as Delete
+	peer2Deletes := peer2.GetDeletes()
+	if len(peer2Deletes) != 0 {
+		t.Errorf("Peer2 should not have received Delete(), got deletes=%v", peer2Deletes)
+	}
+}
