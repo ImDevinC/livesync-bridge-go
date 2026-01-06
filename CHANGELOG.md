@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.4](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.1.3...v1.1.4) (2026-01-06)
+
+### Bug Fixes
+
+* resolve deletion sync with empty paths from CouchDB ([980a6f1](https://github.com/ImDevinC/livesync-bridge-go/commit/980a6f1f6fb567834198e8d6c21e8467f8d534bb))
+
 ## [1.1.3](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.1.2...v1.1.3) (2026-01-06)
 
 ### Bug Fixes
