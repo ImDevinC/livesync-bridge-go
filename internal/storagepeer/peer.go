@@ -175,6 +175,15 @@ func (sp *StoragePeer) Put(path string, data *peer.FileData) (bool, error) {
 		return false, nil
 	}
 
+	// Check if path exists as a directory and remove it if so
+	removed, err := sp.removeDirectoryIfExists(storagePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to handle directory conflict at %s: %w", storagePath, err)
+	}
+	if removed {
+		sp.LogInfo("Resolved directory conflict", "path", path)
+	}
+
 	// Create parent directory
 	dir := filepath.Dir(storagePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -182,7 +191,7 @@ func (sp *StoragePeer) Put(path string, data *peer.FileData) (bool, error) {
 	}
 
 	// Write file with retry logic
-	err := util.Retry(sp.Context(), util.DefaultRetryConfig(), func() error {
+	err = util.Retry(sp.Context(), util.DefaultRetryConfig(), func() error {
 		return os.WriteFile(storagePath, data.Data, 0644)
 	}, nil)
 
@@ -623,4 +632,81 @@ func (sp *StoragePeer) cleanupEmptyDirs(dir string) {
 
 	// Recursively try to clean up parent
 	sp.cleanupEmptyDirs(filepath.Dir(dir))
+}
+
+// removeDirectoryIfExists removes a directory and all its contents if the path is a directory.
+// Returns true if a directory was removed, false otherwise.
+func (sp *StoragePeer) removeDirectoryIfExists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil // Path doesn't exist, nothing to do
+		}
+		return false, err
+	}
+
+	// Not a directory, nothing to remove
+	if !info.IsDir() {
+		return false, nil
+	}
+
+	sp.LogWarn("Removing directory to resolve path conflict", "path", path)
+
+	// Recursively remove directory and contents
+	if err := os.RemoveAll(path); err != nil {
+		return false, fmt.Errorf("failed to remove directory: %w", err)
+	}
+
+	// Clean up file stats for all files that were in this directory
+	if err := sp.cleanupDirectoryStats(path); err != nil {
+		sp.LogWarn("Failed to clean up directory stats", "path", path, "error", err)
+	}
+
+	sp.LogInfo("Removed directory due to path conflict", "path", path)
+	return true, nil
+}
+
+// cleanupDirectoryStats removes all file stat entries for files within a directory.
+func (sp *StoragePeer) cleanupDirectoryStats(dirPath string) error {
+	// Get relative path from rootDir
+	relPath, err := filepath.Rel(sp.rootDir, dirPath)
+	if err != nil {
+		return err
+	}
+
+	// Build the full prefix including peer namespace
+	// Keys are stored as: {name}-{type}-{baseDir}-{key}
+	// For storage peer, baseDir is empty, so it's: {name}-{type}--{key}
+	fullPrefix := fmt.Sprintf("%s-%s--%s", sp.Name(), sp.Type(), fileStatPrefix)
+
+	// Collect all keys to delete
+	var keysToDelete []string
+	err = sp.Store().IteratePrefix(fullPrefix, func(key, value string) error {
+		// Extract local path from key
+		localPath := strings.TrimPrefix(key, fullPrefix)
+
+		// Check if this file was in the deleted directory
+		if strings.HasPrefix(localPath, relPath+string(filepath.Separator)) || localPath == relPath {
+			keysToDelete = append(keysToDelete, fileStatPrefix+localPath)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	// Delete all collected keys
+	for _, key := range keysToDelete {
+		if err := sp.DeleteSetting(key); err != nil {
+			sp.LogDebug("Failed to delete stat", "key", key, "error", err)
+		}
+	}
+
+	if len(keysToDelete) > 0 {
+		sp.LogDebug("Cleaned up directory stats", "path", relPath, "count", len(keysToDelete))
+	}
+
+	return nil
 }
