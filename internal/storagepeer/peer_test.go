@@ -726,3 +726,296 @@ func TestStart_RunsBothScans(t *testing.T) {
 		t.Error("Should have dispatched deletion for deleted.txt")
 	}
 }
+
+// TestStoragePeerPut_DirectoryConflict tests that writing a file over an existing directory works correctly
+func TestStoragePeerPut_DirectoryConflict(t *testing.T) {
+	dir := createTempDir(t)
+	defer os.RemoveAll(dir)
+
+	store := createTempStore(t)
+	mock := &mockDispatcher{}
+
+	conf := config.PeerStorageConf{
+		Name:    "test-peer",
+		Type:    "storage",
+		Group:   "test-group",
+		BaseDir: dir,
+	}
+
+	sp, err := NewStoragePeer(conf, mock.dispatch, store)
+	if err != nil {
+		t.Fatalf("NewStoragePeer failed: %v", err)
+	}
+	defer sp.Stop()
+
+	// Create a directory with a file inside
+	dirPath := filepath.Join(dir, "testdir")
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		t.Fatalf("Failed to create directory: %v", err)
+	}
+	testFile := filepath.Join(dirPath, "file.txt")
+	if err := os.WriteFile(testFile, []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create file in directory: %v", err)
+	}
+
+	// Store file stat to simulate it was synced
+	info, _ := os.Stat(testFile)
+	sp.SetSetting(fileStatPrefix+"testdir/file.txt", fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size()))
+
+	// Now try to Put a file at the directory path
+	testData := []byte("This is now a file")
+	fileData := &peer.FileData{
+		Data:    testData,
+		Deleted: false,
+	}
+
+	success, err := sp.Put("testdir", fileData)
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+	if !success {
+		t.Error("Put should succeed")
+	}
+
+	// Verify the directory was removed and file was written
+	info2, err := os.Stat(dirPath)
+	if err != nil {
+		t.Fatalf("Failed to stat path: %v", err)
+	}
+	if info2.IsDir() {
+		t.Error("Path should now be a file, not a directory")
+	}
+
+	// Verify file content
+	content, err := os.ReadFile(dirPath)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+	if string(content) != string(testData) {
+		t.Errorf("Expected content '%s', got '%s'", testData, content)
+	}
+
+	// Verify file stat was cleaned up
+	if sp.HasSetting(fileStatPrefix + "testdir/file.txt") {
+		t.Error("File stat for testdir/file.txt should be removed")
+	}
+}
+
+// TestStoragePeerPut_DirectoryConflictWithNestedFiles tests handling of nested directory conflicts
+func TestStoragePeerPut_DirectoryConflictWithNestedFiles(t *testing.T) {
+	dir := createTempDir(t)
+	defer os.RemoveAll(dir)
+
+	store := createTempStore(t)
+	mock := &mockDispatcher{}
+
+	conf := config.PeerStorageConf{
+		Name:    "test-peer",
+		Type:    "storage",
+		Group:   "test-group",
+		BaseDir: dir,
+	}
+
+	sp, err := NewStoragePeer(conf, mock.dispatch, store)
+	if err != nil {
+		t.Fatalf("NewStoragePeer failed: %v", err)
+	}
+	defer sp.Stop()
+
+	// Create nested directory structure with multiple files
+	dirPath := filepath.Join(dir, "parent")
+	subDir1 := filepath.Join(dirPath, "sub1")
+	subDir2 := filepath.Join(dirPath, "sub2")
+	if err := os.MkdirAll(subDir1, 0755); err != nil {
+		t.Fatalf("Failed to create sub1: %v", err)
+	}
+	if err := os.MkdirAll(subDir2, 0755); err != nil {
+		t.Fatalf("Failed to create sub2: %v", err)
+	}
+
+	// Create files in nested directories
+	file1 := filepath.Join(dirPath, "file1.txt")
+	file2 := filepath.Join(subDir1, "file2.txt")
+	file3 := filepath.Join(subDir2, "file3.txt")
+	os.WriteFile(file1, []byte("content1"), 0644)
+	os.WriteFile(file2, []byte("content2"), 0644)
+	os.WriteFile(file3, []byte("content3"), 0644)
+
+	// Store file stats to simulate they were synced
+	info1, _ := os.Stat(file1)
+	info2, _ := os.Stat(file2)
+	info3, _ := os.Stat(file3)
+	sp.SetSetting(fileStatPrefix+"parent/file1.txt", fmt.Sprintf("%d-%d", info1.ModTime().Unix(), info1.Size()))
+	sp.SetSetting(fileStatPrefix+"parent/sub1/file2.txt", fmt.Sprintf("%d-%d", info2.ModTime().Unix(), info2.Size()))
+	sp.SetSetting(fileStatPrefix+"parent/sub2/file3.txt", fmt.Sprintf("%d-%d", info3.ModTime().Unix(), info3.Size()))
+
+	// Now try to Put a file at the parent directory path
+	testData := []byte("Replacing entire directory tree")
+	fileData := &peer.FileData{
+		Data:    testData,
+		Deleted: false,
+	}
+
+	success, err := sp.Put("parent", fileData)
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+	if !success {
+		t.Error("Put should succeed")
+	}
+
+	// Verify the directory was removed and file was written
+	info, err := os.Stat(dirPath)
+	if err != nil {
+		t.Fatalf("Failed to stat path: %v", err)
+	}
+	if info.IsDir() {
+		t.Error("Path should now be a file, not a directory")
+	}
+
+	// Verify all file stats were cleaned up
+	if sp.HasSetting(fileStatPrefix + "parent/file1.txt") {
+		t.Error("File stat for parent/file1.txt should be removed")
+	}
+	if sp.HasSetting(fileStatPrefix + "parent/sub1/file2.txt") {
+		t.Error("File stat for parent/sub1/file2.txt should be removed")
+	}
+	if sp.HasSetting(fileStatPrefix + "parent/sub2/file3.txt") {
+		t.Error("File stat for parent/sub2/file3.txt should be removed")
+	}
+}
+
+// TestStoragePeerPut_EmptyDirectoryConflict tests handling of empty directory conflicts
+func TestStoragePeerPut_EmptyDirectoryConflict(t *testing.T) {
+	dir := createTempDir(t)
+	defer os.RemoveAll(dir)
+
+	store := createTempStore(t)
+	mock := &mockDispatcher{}
+
+	conf := config.PeerStorageConf{
+		Name:    "test-peer",
+		Type:    "storage",
+		Group:   "test-group",
+		BaseDir: dir,
+	}
+
+	sp, err := NewStoragePeer(conf, mock.dispatch, store)
+	if err != nil {
+		t.Fatalf("NewStoragePeer failed: %v", err)
+	}
+	defer sp.Stop()
+
+	// Create an empty directory
+	dirPath := filepath.Join(dir, "emptydir")
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		t.Fatalf("Failed to create directory: %v", err)
+	}
+
+	// Try to Put a file at the directory path
+	testData := []byte("File content")
+	fileData := &peer.FileData{
+		Data:    testData,
+		Deleted: false,
+	}
+
+	success, err := sp.Put("emptydir", fileData)
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+	if !success {
+		t.Error("Put should succeed")
+	}
+
+	// Verify the directory was removed and file was written
+	info, err := os.Stat(dirPath)
+	if err != nil {
+		t.Fatalf("Failed to stat path: %v", err)
+	}
+	if info.IsDir() {
+		t.Error("Path should now be a file, not a directory")
+	}
+
+	// Verify content
+	content, err := os.ReadFile(dirPath)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+	if string(content) != string(testData) {
+		t.Errorf("Expected content '%s', got '%s'", testData, content)
+	}
+}
+
+// TestRemoveDirectoryIfExists_NotADirectory tests that the helper correctly handles non-directory paths
+func TestRemoveDirectoryIfExists_NotADirectory(t *testing.T) {
+	dir := createTempDir(t)
+	defer os.RemoveAll(dir)
+
+	store := createTempStore(t)
+	mock := &mockDispatcher{}
+
+	conf := config.PeerStorageConf{
+		Name:    "test-peer",
+		Type:    "storage",
+		Group:   "test-group",
+		BaseDir: dir,
+	}
+
+	sp, err := NewStoragePeer(conf, mock.dispatch, store)
+	if err != nil {
+		t.Fatalf("NewStoragePeer failed: %v", err)
+	}
+	defer sp.Stop()
+
+	// Create a regular file
+	filePath := filepath.Join(dir, "regular.txt")
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+
+	// Call removeDirectoryIfExists on the file
+	removed, err := sp.removeDirectoryIfExists(filePath)
+	if err != nil {
+		t.Fatalf("removeDirectoryIfExists failed: %v", err)
+	}
+	if removed {
+		t.Error("Should return false for non-directory paths")
+	}
+
+	// Verify file still exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		t.Error("File should still exist after removeDirectoryIfExists")
+	}
+}
+
+// TestRemoveDirectoryIfExists_NonExistent tests that the helper handles non-existent paths
+func TestRemoveDirectoryIfExists_NonExistent(t *testing.T) {
+	dir := createTempDir(t)
+	defer os.RemoveAll(dir)
+
+	store := createTempStore(t)
+	mock := &mockDispatcher{}
+
+	conf := config.PeerStorageConf{
+		Name:    "test-peer",
+		Type:    "storage",
+		Group:   "test-group",
+		BaseDir: dir,
+	}
+
+	sp, err := NewStoragePeer(conf, mock.dispatch, store)
+	if err != nil {
+		t.Fatalf("NewStoragePeer failed: %v", err)
+	}
+	defer sp.Stop()
+
+	// Call removeDirectoryIfExists on non-existent path
+	nonExistentPath := filepath.Join(dir, "does-not-exist")
+	removed, err := sp.removeDirectoryIfExists(nonExistentPath)
+	if err != nil {
+		t.Fatalf("removeDirectoryIfExists should not error on non-existent path: %v", err)
+	}
+	if removed {
+		t.Error("Should return false for non-existent paths")
+	}
+}
