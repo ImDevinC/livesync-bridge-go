@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.3](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.1.2...v1.1.3) (2026-01-06)
+
+### Bug Fixes
+
+* resolve file conflicts in parent paths during sync ([67fb812](https://github.com/ImDevinC/livesync-bridge-go/commit/67fb812aa4cf1213d23e36740c1e3aa754efbd54))
+
 ## [1.1.2](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.1.1...v1.1.2) (2026-01-06)
 
 ### Bug Fixes
