@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.5](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.1.4...v1.1.5) (2026-01-08)
+
+### Bug Fixes
+
+* implement automatic reconnection for CouchDB changes feed ([712a675](https://github.com/ImDevinC/livesync-bridge-go/commit/712a6755766a4ff24cdf1a2533c6a0048a7512b3))
+
 ## [1.1.4](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.1.3...v1.1.4) (2026-01-06)
 
 ### Bug Fixes
