@@ -637,125 +637,174 @@ func (p *CouchDBPeer) Get(path string) (*peer.FileData, error) {
 	}, nil
 }
 
-// watchChanges monitors the CouchDB changes feed
+// watchChanges monitors the CouchDB changes feed with automatic reconnection
 func (p *CouchDBPeer) watchChanges(ctx context.Context, since string) {
 	defer p.wg.Done()
 
-	opts := couchdb.ChangesOptions{
-		Since:       since,
-		IncludeDocs: true,
-		Continuous:  true,
-		Heartbeat:   30 * time.Second,
-	}
+	// Retry configuration for reconnection
+	const (
+		initialBackoff    = 1 * time.Second
+		maxBackoff        = 60 * time.Second
+		backoffMultiplier = 2.0
+	)
 
-	changesChan, errChan := p.client.Changes(ctx, opts)
+	attemptNum := 0
+	backoff := initialBackoff
 
+	// Infinite retry loop
 	for {
-		select {
-		case change, ok := <-changesChan:
-			if !ok {
-				p.LogInfo("Changes feed closed")
+		// If this is a reconnection attempt, wait with exponential backoff
+		if attemptNum > 0 {
+			p.LogInfo(fmt.Sprintf("Reconnecting to changes feed (attempt %d, waiting %v)", attemptNum, backoff))
+
+			select {
+			case <-time.After(backoff):
+				// Continue to reconnection
+			case <-ctx.Done():
+				p.LogInfo("Watch changes stopped during backoff")
 				return
 			}
 
-			// Save sequence
-			_ = p.SetSetting("since", change.Seq)
-
-			// Skip if no document or not in our baseDir
-			if change.Doc == nil {
-				continue
+			// Calculate next backoff with exponential growth (capped at maxBackoff)
+			backoff = time.Duration(float64(backoff) * backoffMultiplier)
+			if backoff > maxBackoff {
+				backoff = maxBackoff
 			}
 
-			// Parse document
-			docJSON, err := json.Marshal(change.Doc)
-			if err != nil {
-				p.LogDebug(fmt.Sprintf("Failed to marshal document %s: %v", change.ID, err))
-				continue
+			// Reload the last known sequence from storage in case it was updated
+			if storedSeq, err := p.GetSetting("since"); err == nil && storedSeq != "" {
+				since = storedSeq
 			}
+		}
 
-			var lsDoc LiveSyncDocument
-			if err := json.Unmarshal(docJSON, &lsDoc); err != nil {
-				p.LogDebug(fmt.Sprintf("Failed to parse document %s: %v", change.ID, err))
-				continue
-			}
+		attemptNum++
+		p.LogInfo(fmt.Sprintf("Starting changes feed from sequence: %s", since))
 
-			// Check if path is in our baseDir
-			if p.baseDir != "" && !strings.HasPrefix(lsDoc.Path, p.baseDir) {
-				continue
-			}
+		// Create changes feed options
+		opts := couchdb.ChangesOptions{
+			Since:       since,
+			IncludeDocs: true,
+			Continuous:  true,
+			Heartbeat:   30 * time.Second,
+		}
 
-			// Skip chunk documents
-			if lsDoc.Type == DocTypeLeaf {
-				continue
-			}
+		// Start changes feed
+		changesChan, errChan := p.client.Changes(ctx, opts)
 
-			// Convert to global path
-			globalPath := p.ToGlobalPath(lsDoc.Path)
-
-			// Handle deletion
-			if change.Deleted || lsDoc.Deleted {
-				// When a document is deleted, lsDoc.Path might be empty
-				// Reconstruct path from document ID
-				if globalPath == "" || globalPath == "/" {
-					// Convert document ID back to path (reverse of docPathToID)
-					docPath := strings.ReplaceAll(change.ID, ":", "/")
-					globalPath = p.ToGlobalPath(docPath)
+		// Inner loop - process changes until error or context cancellation
+	changesLoop:
+		for {
+			select {
+			case change, ok := <-changesChan:
+				if !ok {
+					p.LogInfo("Changes feed closed")
+					// Channel closed, break to retry
+					break changesLoop
 				}
 
-				p.LogInfo(fmt.Sprintf("Change detected: %s (deleted)", globalPath))
+				// Save sequence
+				_ = p.SetSetting("since", change.Seq)
+				since = change.Seq
+
+				// Skip if no document or not in our baseDir
+				if change.Doc == nil {
+					continue
+				}
+
+				// Parse document
+				docJSON, err := json.Marshal(change.Doc)
+				if err != nil {
+					p.LogDebug(fmt.Sprintf("Failed to marshal document %s: %v", change.ID, err))
+					continue
+				}
+
+				var lsDoc LiveSyncDocument
+				if err := json.Unmarshal(docJSON, &lsDoc); err != nil {
+					p.LogDebug(fmt.Sprintf("Failed to parse document %s: %v", change.ID, err))
+					continue
+				}
+
+				// Check if path is in our baseDir
+				if p.baseDir != "" && !strings.HasPrefix(lsDoc.Path, p.baseDir) {
+					continue
+				}
+
+				// Skip chunk documents
+				if lsDoc.Type == DocTypeLeaf {
+					continue
+				}
+
+				// Convert to global path
+				globalPath := p.ToGlobalPath(lsDoc.Path)
+
+				// Handle deletion
+				if change.Deleted || lsDoc.Deleted {
+					// When a document is deleted, lsDoc.Path might be empty
+					// Reconstruct path from document ID
+					if globalPath == "" || globalPath == "/" {
+						// Convert document ID back to path (reverse of docPathToID)
+						docPath := strings.ReplaceAll(change.ID, ":", "/")
+						globalPath = p.ToGlobalPath(docPath)
+					}
+
+					p.LogInfo(fmt.Sprintf("Change detected: %s (deleted)", globalPath))
+					fileData := &peer.FileData{
+						Deleted: true,
+					}
+					if !p.IsRepeating(globalPath, fileData) {
+						p.DispatchFrom(p, globalPath, fileData)
+						p.MarkProcessed(globalPath, fileData)
+
+						// Clean up metadata and sync tracking
+						_ = p.DeleteSetting(docMetaPrefix + p.Name() + "-" + globalPath)
+						_ = p.removeDocumentSynced(lsDoc.ID)
+					}
+					continue
+				}
+
+				// Handle update/create
+				data, err := p.documentToData(&lsDoc)
+				if err != nil {
+					p.LogDebug(fmt.Sprintf("Failed to convert document %s: %v", globalPath, err))
+					continue
+				}
+
 				fileData := &peer.FileData{
-					Deleted: true,
+					CTime:   time.Unix(lsDoc.CTime, 0),
+					MTime:   time.Unix(lsDoc.MTime, 0),
+					Size:    int64(lsDoc.Size),
+					Data:    data,
+					Deleted: false,
 				}
+
+				p.LogInfo(fmt.Sprintf("Change detected: %s (%d bytes)", globalPath, len(data)))
+
 				if !p.IsRepeating(globalPath, fileData) {
 					p.DispatchFrom(p, globalPath, fileData)
 					p.MarkProcessed(globalPath, fileData)
 
-					// Clean up metadata and sync tracking
-					_ = p.DeleteSetting(docMetaPrefix + p.Name() + "-" + globalPath)
-					_ = p.removeDocumentSynced(lsDoc.ID)
+					// Update metadata and mark document as synced
+					_ = p.updateDocumentMetadata(globalPath, &lsDoc)
+					_ = p.markDocumentSynced(lsDoc.ID)
 				}
-				continue
-			}
 
-			// Handle update/create
-			data, err := p.documentToData(&lsDoc)
-			if err != nil {
-				p.LogDebug(fmt.Sprintf("Failed to convert document %s: %v", globalPath, err))
-				continue
-			}
+			case err := <-errChan:
+				if ctx.Err() != nil {
+					// Context cancelled, normal shutdown
+					p.LogInfo("Watch changes stopped")
+					return
+				}
+				// Log error and break inner loop to trigger reconnection
+				p.LogError(fmt.Sprintf("Changes feed error: %v", err))
+				break changesLoop
 
-			fileData := &peer.FileData{
-				CTime:   time.Unix(lsDoc.CTime, 0),
-				MTime:   time.Unix(lsDoc.MTime, 0),
-				Size:    int64(lsDoc.Size),
-				Data:    data,
-				Deleted: false,
-			}
-
-			p.LogInfo(fmt.Sprintf("Change detected: %s (%d bytes)", globalPath, len(data)))
-
-			if !p.IsRepeating(globalPath, fileData) {
-				p.DispatchFrom(p, globalPath, fileData)
-				p.MarkProcessed(globalPath, fileData)
-
-				// Update metadata and mark document as synced
-				_ = p.updateDocumentMetadata(globalPath, &lsDoc)
-				_ = p.markDocumentSynced(lsDoc.ID)
-			}
-
-		case err := <-errChan:
-			if ctx.Err() != nil {
-				// Context cancelled, normal shutdown
+			case <-ctx.Done():
+				p.LogInfo("Watch changes stopped")
 				return
 			}
-			p.LogInfo(fmt.Sprintf("Changes feed error: %v", err))
-			// TODO: Implement retry logic
-			return
-
-		case <-ctx.Done():
-			p.LogInfo("Watch changes stopped")
-			return
 		}
+
+		// Inner loop exited due to error or channel close, will retry from top of outer loop
 	}
 }
 
