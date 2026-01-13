@@ -41,6 +41,19 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Automatic conflict resolution for CouchDB peers
+  - Resolves concurrent edit conflicts automatically without manual intervention
+  - Configurable via `conflictResolution` option in CouchDB peer configuration (default: `timestamp-wins`)
+  - Four resolution strategies available:
+    - `timestamp-wins`: Chooses version with newer modification time (remote wins on ties)
+    - `local-wins`: Always prefers local version regardless of timestamps
+    - `remote-wins`: Always prefers remote version, discarding local changes
+    - `manual`: Returns error requiring manual intervention
+  - Retry logic with exponential backoff attempts to resolve conflicts before applying strategy
+  - Works with both regular and chunked files (large files >50KB)
+  - Applies to Put, Delete, and chunk operations
+  - Comprehensive logging at INFO level for conflict resolution events
+  - Extensive test coverage including unit tests and integration tests with real CouchDB
 - Deletion detection during offline periods
   - Storage peers now detect files deleted while the bridge was offline on startup
   - CouchDB peers now detect documents deleted while the bridge was offline during initial sync
@@ -62,6 +75,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - CouchDB peer now syncs existing documents on first startup instead of only monitoring new changes
 - Sample configuration updated to include `initialSync` option
+- Sample configuration updated to include `conflictResolution` option with documentation
 
 ## [1.0.5](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.0.4...v1.0.5) (2026-01-02)
 

@@ -31,21 +31,22 @@ func (p PeerStorageConf) GetBaseDir() string { return p.BaseDir }
 
 // PeerCouchDBConf represents configuration for a CouchDB peer
 type PeerCouchDBConf struct {
-	Type                string `json:"type"`
-	Name                string `json:"name"`
-	Group               string `json:"group,omitempty"`
-	Database            string `json:"database"`
-	Username            string `json:"username"`
-	Password            string `json:"password"`
-	URL                 string `json:"url"`
-	CustomChunkSize     *int   `json:"customChunkSize,omitempty"`
-	MinimumChunkSize    *int   `json:"minimumChunkSize,omitempty"`
-	Passphrase          string `json:"passphrase"`
-	ObfuscatePassphrase string `json:"obfuscatePassphrase,omitempty"` // Deferred feature
-	BaseDir             string `json:"baseDir"`
-	UseRemoteTweaks     *bool  `json:"useRemoteTweaks,omitempty"` // Deferred feature
-	EnableCompression   *bool  `json:"enableCompression,omitempty"`
-	InitialSync         *bool  `json:"initialSync,omitempty"` // Sync existing documents on first run
+	Type                string  `json:"type"`
+	Name                string  `json:"name"`
+	Group               string  `json:"group,omitempty"`
+	Database            string  `json:"database"`
+	Username            string  `json:"username"`
+	Password            string  `json:"password"`
+	URL                 string  `json:"url"`
+	CustomChunkSize     *int    `json:"customChunkSize,omitempty"`
+	MinimumChunkSize    *int    `json:"minimumChunkSize,omitempty"`
+	Passphrase          string  `json:"passphrase"`
+	ObfuscatePassphrase string  `json:"obfuscatePassphrase,omitempty"` // Deferred feature
+	BaseDir             string  `json:"baseDir"`
+	UseRemoteTweaks     *bool   `json:"useRemoteTweaks,omitempty"` // Deferred feature
+	EnableCompression   *bool   `json:"enableCompression,omitempty"`
+	InitialSync         *bool   `json:"initialSync,omitempty"` // Sync existing documents on first run
+	ConflictResolution  *string `json:"conflictResolution,omitempty"`
 }
 
 func (p PeerCouchDBConf) GetType() string    { return p.Type }

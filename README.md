@@ -39,6 +39,7 @@ It enables multi-directional synchronization between any combination of peers, w
 - Path obfuscation
 - File change detection and processing
 - Initial sync of existing files on first startup
+- Automatic conflict resolution for concurrent edits
 
 ## Why Port to Go?
 
@@ -76,7 +77,7 @@ livesync-bridge-go/
 
 ## Documentation
 
-- **[USAGE.md](USAGE.md)** - Complete usage guide with configuration examples
+- **[USAGE.md](USAGE.md)** - Complete usage guide with configuration examples and conflict resolution
 - **[RELEASE.md](RELEASE.md)** - Release process and versioning guide
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
 - **[PLAN.md](PLAN.md)** - Original implementation plan
@@ -94,6 +95,7 @@ livesync-bridge-go/
    - Compression (gzip)
    - Chunking for large files
    - Real-time changes feed monitoring
+   - Automatic conflict resolution (timestamp-wins, local-wins, remote-wins, manual)
 5. **Configuration** ✅ - JSON-based configuration system with validation
 6. **Utilities** ✅ - Hashing, LRU caching, path conversion, retry logic
 

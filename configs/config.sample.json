@@ -1,4 +1,5 @@
 {
+    "_comment": "For detailed configuration documentation, see USAGE.md",
     "peers": [
         {
             "type": "couchdb",
@@ -13,7 +14,9 @@
             "customChunkSize": 100,
             "minimumChunkSize": 20,
             "enableCompression": true,
-            "initialSync": true
+            "initialSync": true,
+            "_comment_conflictResolution": "Optional: Strategy for resolving edit conflicts. Valid values: 'timestamp-wins' (default, newest wins), 'local-wins' (local always wins), 'remote-wins' (remote always wins), 'manual' (error on conflict). If omitted, defaults to 'timestamp-wins'.",
+            "conflictResolution": "timestamp-wins"
         },
         {
             "type": "storage",

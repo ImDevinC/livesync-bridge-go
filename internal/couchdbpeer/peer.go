@@ -444,7 +444,134 @@ func (p *CouchDBPeer) putDocumentWithRetry(ctx context.Context, doc LiveSyncDocu
 		return isCouchDBConflict(err)
 	})
 
+	// If all retries failed with a conflict, apply conflict resolution
+	if err != nil && isCouchDBConflict(err) {
+		p.LogInfo("Retries exhausted, applying conflict resolution",
+			"path", doc.Path,
+			"docID", doc.ID,
+		)
+
+		resolvedDoc, resolveErr := p.resolveConflict(ctx, doc)
+		if resolveErr != nil {
+			return "", fmt.Errorf("conflict resolution failed after retries: %w", resolveErr)
+		}
+
+		p.LogInfo("Document conflict resolved successfully",
+			"path", doc.Path,
+			"docID", doc.ID,
+			"resolvedRev", resolvedDoc.Rev,
+		)
+
+		return resolvedDoc.Rev, nil
+	}
+
 	return resultRev, err
+}
+
+// deleteDocumentWithRetry attempts to delete a document with retry logic for conflicts
+func (p *CouchDBPeer) deleteDocumentWithRetry(ctx context.Context, docID string, initialRev string, localMTime int64) error {
+	config := util.QuickRetryConfig() // 3 retries, 50ms initial, 5s max
+
+	rev := initialRev
+	err := util.RetryWithJitter(ctx, config, func() error {
+		// Get latest revision before each delete attempt
+		if existingDoc, getErr := p.client.Get(ctx, docID); getErr == nil {
+			rev = existingDoc.Rev
+		}
+
+		deleteErr := p.client.Delete(ctx, docID, rev)
+		return deleteErr
+	}, func(err error) bool {
+		// Only retry on conflict errors
+		return isCouchDBConflict(err)
+	})
+
+	// If all retries failed with a conflict, apply delete conflict resolution
+	if err != nil && isCouchDBConflict(err) {
+		p.LogInfo("Delete retries exhausted, applying conflict resolution",
+			"docID", docID,
+		)
+
+		// Determine if delete should proceed based on conflict resolution strategy
+		shouldDelete, resolveErr := p.resolveDeleteConflict(ctx, docID, localMTime)
+		if resolveErr != nil {
+			return fmt.Errorf("delete conflict resolution failed: %w", resolveErr)
+		}
+
+		if !shouldDelete {
+			// Remote version wins, delete is canceled
+			p.LogInfo("Delete canceled by conflict resolution, remote version accepted",
+				"docID", docID,
+			)
+			return nil // Not an error - conflict resolved by accepting remote
+		}
+
+		// Delete should proceed - get latest revision and force delete
+		p.LogInfo("Delete approved by conflict resolution, forcing delete",
+			"docID", docID,
+		)
+
+		latestDoc, getErr := p.client.Get(ctx, docID)
+		if getErr != nil {
+			return fmt.Errorf("failed to get latest revision for forced delete: %w", getErr)
+		}
+
+		if deleteErr := p.client.Delete(ctx, docID, latestDoc.Rev); deleteErr != nil {
+			return fmt.Errorf("forced delete failed after conflict resolution: %w", deleteErr)
+		}
+
+		p.LogInfo("Document deleted successfully after conflict resolution",
+			"docID", docID,
+		)
+
+		return nil
+	}
+
+	return err
+}
+
+// deleteChunkWithRetry attempts to delete a chunk with retry logic for conflicts
+func (p *CouchDBPeer) deleteChunkWithRetry(ctx context.Context, chunkID string, initialRev string) error {
+	config := util.QuickRetryConfig() // 3 retries, 50ms initial, 5s max
+
+	rev := initialRev
+	err := util.RetryWithJitter(ctx, config, func() error {
+		// Get latest revision before each delete attempt
+		if existingChunk, getErr := p.client.Get(ctx, chunkID); getErr == nil {
+			rev = existingChunk.Rev
+		}
+
+		deleteErr := p.client.Delete(ctx, chunkID, rev)
+		return deleteErr
+	}, func(err error) bool {
+		// Only retry on conflict errors
+		return isCouchDBConflict(err)
+	})
+
+	// If all retries failed with a conflict, force delete with latest revision
+	if err != nil && isCouchDBConflict(err) {
+		p.LogInfo("Chunk delete retries exhausted, forcing delete with latest revision",
+			"chunkID", chunkID,
+		)
+
+		// Get latest revision and force delete
+		latestChunk, getErr := p.client.Get(ctx, chunkID)
+		if getErr != nil {
+			return fmt.Errorf("failed to get latest chunk revision for forced delete: %w", getErr)
+		}
+
+		if deleteErr := p.client.Delete(ctx, chunkID, latestChunk.Rev); deleteErr != nil {
+			return fmt.Errorf("forced chunk delete failed: %w", deleteErr)
+		}
+
+		p.LogInfo("Chunk deleted successfully after retry exhaustion",
+			"chunkID", chunkID,
+		)
+
+		return nil
+	}
+
+	return err
 }
 
 // putChunkWithRetry attempts to put a chunk document with retry logic for conflicts
@@ -468,6 +595,43 @@ func (p *CouchDBPeer) putChunkWithRetry(ctx context.Context, chunk ChunkDocument
 		// Only retry on conflict errors
 		return isCouchDBConflict(err)
 	})
+
+	// If all retries failed with a conflict, apply chunk conflict resolution
+	if err != nil && isCouchDBConflict(err) {
+		p.LogInfo("Chunk retries exhausted, applying conflict resolution",
+			"chunkID", chunk.ID,
+		)
+
+		// Delete the existing chunk and recreate with local data
+		existingChunk, getErr := p.client.Get(ctx, chunk.ID)
+		if getErr != nil {
+			return "", fmt.Errorf("conflict resolution failed: cannot get existing chunk: %w", getErr)
+		}
+
+		// Delete existing chunk
+		deleteErr := p.client.Delete(ctx, chunk.ID, existingChunk.Rev)
+		if deleteErr != nil {
+			return "", fmt.Errorf("conflict resolution failed: cannot delete existing chunk: %w", deleteErr)
+		}
+
+		p.LogInfo("Deleted conflicting chunk, recreating with local data",
+			"chunkID", chunk.ID,
+		)
+
+		// Recreate chunk with local data (no revision needed for new document)
+		chunk.Rev = ""
+		newRev, putErr := p.client.Put(ctx, chunk.ID, chunk)
+		if putErr != nil {
+			return "", fmt.Errorf("conflict resolution failed: cannot recreate chunk: %w", putErr)
+		}
+
+		p.LogInfo("Chunk conflict resolved successfully",
+			"chunkID", chunk.ID,
+			"resolvedRev", newRev,
+		)
+
+		return newRev, nil
+	}
 
 	return resultRev, err
 }
@@ -569,7 +733,7 @@ func (p *CouchDBPeer) Delete(path string) (bool, error) {
 	localPath := p.ToLocalPath(path)
 	docID := docPathToID(localPath)
 
-	// Get current document to get revision
+	// Get current document to get revision and parse as LiveSyncDocument
 	doc, err := p.client.Get(ctx, docID)
 	if err != nil {
 		// Document might not exist, which is fine
@@ -577,15 +741,29 @@ func (p *CouchDBPeer) Delete(path string) (bool, error) {
 		return false, nil
 	}
 
-	// Parse as LiveSyncDocument to check for children
-	docJSON, _ := json.Marshal(doc)
+	// Parse as LiveSyncDocument to check for children and get MTime
 	var lsDoc LiveSyncDocument
-	if err := json.Unmarshal(docJSON, &lsDoc); err == nil && len(lsDoc.Children) > 0 {
-		// Delete all chunks
+	row := p.client.DB().Get(ctx, docID)
+	if row.Err() != nil {
+		p.LogDebug(fmt.Sprintf("Could not parse document %s for deletion: %v", path, row.Err()))
+		return false, nil
+	}
+	if err := row.ScanDoc(&lsDoc); err != nil {
+		p.LogDebug(fmt.Sprintf("Could not scan document %s for deletion: %v", path, err))
+		return false, nil
+	}
+
+	// Delete all chunks with retry logic
+	if len(lsDoc.Children) > 0 {
 		for _, chunkID := range lsDoc.Children {
-			chunkDoc, err := p.client.Get(ctx, chunkID)
-			if err == nil {
-				p.client.Delete(ctx, chunkID, chunkDoc.Rev)
+			chunkDoc, getErr := p.client.Get(ctx, chunkID)
+			if getErr == nil {
+				if deleteErr := p.deleteChunkWithRetry(ctx, chunkID, chunkDoc.Rev); deleteErr != nil {
+					p.LogWarn("Failed to delete chunk, continuing with document delete",
+						"chunkID", chunkID,
+						"error", deleteErr,
+					)
+				}
 			}
 		}
 	}
@@ -593,8 +771,8 @@ func (p *CouchDBPeer) Delete(path string) (bool, error) {
 	// Mark as processed BEFORE deleting to prevent changes feed loop
 	p.MarkProcessed(path, nil)
 
-	// Delete main document
-	err = p.client.Delete(ctx, docID, doc.Rev)
+	// Delete main document with retry and conflict resolution
+	err = p.deleteDocumentWithRetry(ctx, docID, doc.Rev, lsDoc.MTime)
 	if err != nil {
 		return false, fmt.Errorf("failed to delete document: %w", err)
 	}
