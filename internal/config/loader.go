@@ -51,6 +51,10 @@ func LoadConfig(path string) (*Config, error) {
 			if err := json.Unmarshal(rawPeer, &couchdbPeer); err != nil {
 				return nil, fmt.Errorf("failed to parse couchdb peer %d: %w", i, err)
 			}
+			// Apply conflict resolution defaults
+			if err := applyConflictResolutionDefaults(&couchdbPeer); err != nil {
+				return nil, fmt.Errorf("failed to apply defaults to couchdb peer %d: %w", i, err)
+			}
 			peer = couchdbPeer
 		default:
 			return nil, fmt.Errorf("unknown peer type '%s' for peer %d", typeCheck.Type, i)
@@ -101,6 +105,10 @@ func validateConfig(config *Config) error {
 			if p.Password == "" {
 				return fmt.Errorf("couchdb peer %s has no password", name)
 			}
+			// Validate conflict resolution strategy
+			if err := validateConflictResolution(&p); err != nil {
+				return fmt.Errorf("couchdb peer %s: %w", name, err)
+			}
 		case PeerStorageConf:
 			// BaseDir is required for storage peers
 			if p.BaseDir == "" {
@@ -111,5 +119,32 @@ func validateConfig(config *Config) error {
 		}
 	}
 
+	return nil
+}
+
+// validateConflictResolution validates and applies defaults for conflict resolution strategy
+func validateConflictResolution(p *PeerCouchDBConf) error {
+	validStrategies := map[string]bool{
+		"timestamp-wins": true,
+		"local-wins":     true,
+		"remote-wins":    true,
+		"manual":         true,
+	}
+
+	// Validate the specified strategy (defaults already applied)
+	if p.ConflictResolution != nil && !validStrategies[*p.ConflictResolution] {
+		return fmt.Errorf("invalid conflict resolution strategy '%s', must be one of: timestamp-wins, local-wins, remote-wins, manual", *p.ConflictResolution)
+	}
+
+	return nil
+}
+
+// applyConflictResolutionDefaults applies default values for conflict resolution
+func applyConflictResolutionDefaults(p *PeerCouchDBConf) error {
+	// Apply default if not specified
+	if p.ConflictResolution == nil {
+		defaultStrategy := "timestamp-wins"
+		p.ConflictResolution = &defaultStrategy
+	}
 	return nil
 }

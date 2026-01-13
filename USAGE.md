@@ -287,6 +287,190 @@ Set `initialSync: false` if you want the peer to only process new changes and ig
 - You want faster startup time
 - You're testing with partial data
 
+## Conflict Resolution
+
+When multiple devices edit the same file simultaneously, conflicts can occur during synchronization. LiveSync Bridge includes automatic conflict resolution to handle these situations gracefully without user intervention.
+
+### What is a Conflict?
+
+A conflict occurs when:
+- Two devices modify the same file and try to sync at nearly the same time
+- The remote version has been updated since you last read it
+- CouchDB returns a `409 Conflict` error during synchronization
+
+Without conflict resolution, the synchronization would fail and the file would not be synced. With conflict resolution enabled, LiveSync Bridge automatically determines which version should win based on your configured strategy.
+
+### How Conflict Resolution Works
+
+1. **Retry First**: When a conflict is detected, LiveSync Bridge first attempts to retry the operation with the latest revision (up to 3 attempts with exponential backoff)
+2. **Resolve on Exhaustion**: If retries are exhausted and the conflict persists, conflict resolution is triggered
+3. **Apply Strategy**: The configured strategy determines which version wins
+4. **Sync Winner**: The winning version is persisted and synced to all peers in the group
+
+### Configuration
+
+Add the `conflictResolution` field to your CouchDB peer configuration:
+
+```json
+{
+  "type": "couchdb",
+  "name": "remote-vault",
+  "group": "sync",
+  "url": "http://localhost:5984",
+  "database": "my_vault",
+  "passphrase": "encryption-key",
+  "conflictResolution": "timestamp-wins"
+}
+```
+
+**Valid values:**
+- `timestamp-wins` (default) - Winner chosen by modification timestamp
+- `local-wins` - Local version always wins
+- `remote-wins` - Remote version always wins
+- `manual` - Manual resolution required (returns error)
+
+If not specified, `timestamp-wins` is used as the default.
+
+### Conflict Resolution Strategies
+
+#### timestamp-wins (Default)
+
+The version with the newer modification timestamp wins. This is the most intelligent strategy as it preserves the most recent changes.
+
+**Behavior:**
+- Compares `mtime` (modification time) of local and remote versions
+- Local wins if local `mtime` > remote `mtime`
+- Remote wins if remote `mtime` > local `mtime`
+- **Tiebreaker**: Remote wins when timestamps are exactly equal
+
+**Use when:**
+- You want automatic resolution based on "last modified wins"
+- Multiple users edit files at different times
+- You trust modification timestamps to indicate the "latest" version
+
+**Example log:**
+```
+Resolving conflict path=notes.md strategy=timestamp-wins localRev=2-abc remoteRev=3-def
+Comparing timestamps localMTime=2026-01-13T10:30:00Z remoteMTime=2026-01-13T10:28:00Z
+Timestamp winner: LOCAL (newer)
+Conflict resolved path=notes.md winner=local newRev=4-xyz
+```
+
+#### local-wins
+
+Local version always wins, regardless of timestamps. The local changes are forced to the remote server, overwriting the remote version.
+
+**Behavior:**
+- Forces local version to remote with remote's revision
+- Re-uploads all chunks if file is chunked
+- Ignores timestamps and remote content completely
+
+**Use when:**
+- This device is the "primary" or authoritative source
+- You always want local changes to take precedence
+- Testing or development scenarios where local state matters most
+
+**Example log:**
+```
+Resolving conflict path=config.json strategy=local-wins
+Resolving conflict with local-wins strategy path=config.json
+Conflict resolved path=config.json winner=local newRev=4-xyz
+```
+
+#### remote-wins
+
+Remote version always wins. The local changes are discarded and the remote version is accepted and synced to local peers.
+
+**Behavior:**
+- Accepts remote version as-is
+- Dispatches remote data to local storage peer(s)
+- Local changes are lost
+
+**Use when:**
+- The remote server is the "primary" or authoritative source
+- You want to prevent local changes from overwriting remote data
+- Implementing a "download-only" or "read-mostly" sync mode
+
+**Example log:**
+```
+Resolving conflict path=template.md strategy=remote-wins
+Resolving conflict with remote-wins strategy path=template.md
+Accepting remote version and dispatching to local peers path=template.md
+Conflict resolved path=config.json winner=remote newRev=3-def
+```
+
+#### manual
+
+Manual resolution required. When a conflict occurs, LiveSync Bridge returns an error instead of automatically resolving it.
+
+**Behavior:**
+- Returns a descriptive error when conflict is detected
+- Synchronization fails for that file
+- Requires user intervention to resolve
+
+**Use when:**
+- You want full control over conflict resolution
+- Conflicts are rare and should be handled case-by-case
+- You want to be notified when conflicts occur
+
+**Example log:**
+```
+Resolving conflict path=important.md strategy=manual
+ERROR: manual conflict resolution required for important.md (local: 2-abc, remote: 3-def)
+```
+
+### Conflict Resolution for Delete Operations
+
+Conflict resolution also applies to delete operations when the remote file has been modified.
+
+**Strategy behavior for deletes:**
+
+- **timestamp-wins**: Delete proceeds if delete time >= remote modification time; otherwise remote version is preserved
+- **local-wins**: Delete always proceeds
+- **remote-wins**: Delete is canceled and remote version is preserved
+- **manual**: Error returned requiring manual intervention
+
+When a delete is canceled (remote wins), the remote version is automatically dispatched to local peers to ensure the file is preserved locally.
+
+**Example log (delete conflict with timestamp-wins):**
+```
+Resolving delete conflict docID=notes.md strategy=timestamp-wins
+Delete wins by timestamp localMTime=2026-01-13T10:30:00Z remoteMTime=2026-01-13T10:25:00Z docID=notes.md
+Document deleted successfully
+```
+
+**Example log (delete canceled):**
+```
+Resolving delete conflict docID=notes.md strategy=remote-wins
+Remote version wins by remote-wins strategy, canceling delete docID=notes.md
+Accepting remote version (canceling delete) and dispatching to local peers docID=notes.md
+```
+
+### Chunked Files
+
+Conflict resolution works seamlessly with chunked files (files larger than the chunk size threshold):
+
+- **timestamp-wins**: Compares timestamps of main document, winner's chunks replace all chunks
+- **local-wins**: Deletes all remote chunks and re-uploads local chunks
+- **remote-wins**: Preserves remote chunks and dispatches to local peers
+
+All chunks are handled atomically as part of the resolution process.
+
+### Best Practices
+
+1. **Choose the right strategy**: Consider your use case and pick the strategy that matches your needs
+2. **Monitor logs**: Watch for conflict resolution messages in the logs to understand when conflicts occur
+3. **Test your strategy**: Use the integration tests to validate behavior matches your expectations
+4. **Timestamp accuracy**: For `timestamp-wins` strategy, ensure system clocks are synchronized across devices (use NTP)
+5. **Backup important data**: While conflict resolution preserves data based on strategy, backups are always recommended
+6. **Manual for critical files**: Consider using `manual` strategy for files where conflicts should never be automatically resolved
+
+### Disabling Conflict Resolution
+
+To disable automatic conflict resolution, set `conflictResolution: "manual"`. This will cause synchronization to fail when conflicts occur, requiring you to resolve them manually.
+
+Alternatively, you can omit the `conflictResolution` field entirely to use the default `timestamp-wins` strategy, which provides automatic resolution based on modification timestamps.
+
 ## Troubleshooting
 
 ### Check Current Paths

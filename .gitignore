@@ -33,6 +33,7 @@ source/
 *.swo
 *~
 .DS_Store
+.opencode/
 
 # OS specific
 Thumbs.db

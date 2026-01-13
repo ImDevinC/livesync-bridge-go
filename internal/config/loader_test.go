@@ -138,3 +138,157 @@ func TestLoadConfigValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestConflictResolutionValidation(t *testing.T) {
+	tests := []struct {
+		name          string
+		config        string
+		expectError   bool
+		expectedValue string
+	}{
+		{
+			name: "default strategy applied when omitted",
+			config: `{
+				"peers": [
+					{
+						"type": "couchdb",
+						"name": "test",
+						"database": "testdb",
+						"username": "admin",
+						"password": "pass",
+						"url": "http://localhost:5984",
+						"passphrase": "secret"
+					}
+				]
+			}`,
+			expectError:   false,
+			expectedValue: "timestamp-wins",
+		},
+		{
+			name: "valid strategy timestamp-wins",
+			config: `{
+				"peers": [
+					{
+						"type": "couchdb",
+						"name": "test",
+						"database": "testdb",
+						"username": "admin",
+						"password": "pass",
+						"url": "http://localhost:5984",
+						"passphrase": "secret",
+						"conflictResolution": "timestamp-wins"
+					}
+				]
+			}`,
+			expectError:   false,
+			expectedValue: "timestamp-wins",
+		},
+		{
+			name: "valid strategy local-wins",
+			config: `{
+				"peers": [
+					{
+						"type": "couchdb",
+						"name": "test",
+						"database": "testdb",
+						"username": "admin",
+						"password": "pass",
+						"url": "http://localhost:5984",
+						"passphrase": "secret",
+						"conflictResolution": "local-wins"
+					}
+				]
+			}`,
+			expectError:   false,
+			expectedValue: "local-wins",
+		},
+		{
+			name: "valid strategy remote-wins",
+			config: `{
+				"peers": [
+					{
+						"type": "couchdb",
+						"name": "test",
+						"database": "testdb",
+						"username": "admin",
+						"password": "pass",
+						"url": "http://localhost:5984",
+						"passphrase": "secret",
+						"conflictResolution": "remote-wins"
+					}
+				]
+			}`,
+			expectError:   false,
+			expectedValue: "remote-wins",
+		},
+		{
+			name: "valid strategy manual",
+			config: `{
+				"peers": [
+					{
+						"type": "couchdb",
+						"name": "test",
+						"database": "testdb",
+						"username": "admin",
+						"password": "pass",
+						"url": "http://localhost:5984",
+						"passphrase": "secret",
+						"conflictResolution": "manual"
+					}
+				]
+			}`,
+			expectError:   false,
+			expectedValue: "manual",
+		},
+		{
+			name: "invalid strategy rejected",
+			config: `{
+				"peers": [
+					{
+						"type": "couchdb",
+						"name": "test",
+						"database": "testdb",
+						"username": "admin",
+						"password": "pass",
+						"url": "http://localhost:5984",
+						"passphrase": "secret",
+						"conflictResolution": "invalid-strategy"
+					}
+				]
+			}`,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.json")
+
+			if err := os.WriteFile(configPath, []byte(tt.config), 0644); err != nil {
+				t.Fatalf("Failed to create test config: %v", err)
+			}
+
+			config, err := LoadConfig(configPath)
+			if tt.expectError && err == nil {
+				t.Error("Expected error but got none")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			// If no error expected, verify the strategy value
+			if !tt.expectError && config != nil {
+				couchdbPeer, ok := config.Peers[0].(PeerCouchDBConf)
+				if !ok {
+					t.Fatal("Failed to cast to PeerCouchDBConf")
+				}
+				if couchdbPeer.ConflictResolution == nil {
+					t.Error("ConflictResolution is nil")
+				} else if *couchdbPeer.ConflictResolution != tt.expectedValue {
+					t.Errorf("Expected conflict resolution '%s', got '%s'", tt.expectedValue, *couchdbPeer.ConflictResolution)
+				}
+			}
+		})
+	}
+}
