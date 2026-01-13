@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.1.5...v1.2.0) (2026-01-13)
+
+### Features
+
+* **conflict:** add comprehensive conflict resolution system ([9fcdea1](https://github.com/ImDevinC/livesync-bridge-go/commit/9fcdea15af02c08de47f0827038a586d193ee905))
+
+### Bug Fixes
+
+* **test:** resolve linter errors in conflict resolution tests ([37a60a7](https://github.com/ImDevinC/livesync-bridge-go/commit/37a60a773d7e882de04dac470827ae44ce13484c))
+
 ## [1.1.5](https://github.com/ImDevinC/livesync-bridge-go/compare/v1.1.4...v1.1.5) (2026-01-08)
 
 ### Bug Fixes
