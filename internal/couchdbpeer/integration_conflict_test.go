@@ -368,24 +368,6 @@ func countChunks(t *testing.T, ctx context.Context, p *CouchDBPeer, docID string
 	return count
 }
 
-// waitForCondition polls a condition function until it returns true or timeout
-func waitForCondition(t *testing.T, timeout time.Duration, condition func() bool) bool {
-	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
-	for time.Now().Before(deadline) {
-		if condition() {
-			return true
-		}
-		<-ticker.C
-	}
-
-	return false
-}
-
 // TestIntegrationInfrastructure is a simple test to verify the infrastructure works
 func TestIntegrationInfrastructure(t *testing.T) {
 	cfg := defaultIntegrationConfig()
@@ -484,7 +466,7 @@ func TestIntegrationConcurrentEdits(t *testing.T) {
 
 	// Now attempt to Put device 1's version (older)
 	// This should trigger retries and eventually conflict resolution
-	_, err = p.Put(docPath, &peer.FileData{
+	_, _ = p.Put(docPath, &peer.FileData{
 		Data:  device1Data,
 		Size:  int64(len(device1Data)),
 		MTime: time.Unix(device1MTime, 0),

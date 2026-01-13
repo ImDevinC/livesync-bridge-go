@@ -1625,7 +1625,7 @@ func TestDeleteDocumentWithRetry_RetryLogic(t *testing.T) {
 	updateDoc := initialDoc
 	updateDoc.Rev = rev
 	updateDoc.Data = base64.StdEncoding.EncodeToString([]byte("updated data"))
-	rev2, err := p.client.Put(ctx, docID, updateDoc)
+	_, err = p.client.Put(ctx, docID, updateDoc)
 	if err != nil {
 		t.Fatalf("Failed to update document: %v", err)
 	}
@@ -1667,6 +1667,7 @@ func TestDeleteDocumentWithRetry_RetryLogic(t *testing.T) {
 	// Update multiple times to make first revision very stale
 	doc2.Rev = rev1
 	doc2.Data = base64.StdEncoding.EncodeToString([]byte("data 2"))
+	var rev2 string
 	rev2, _ = p.client.Put(ctx, docID2, doc2)
 
 	doc2.Rev = rev2
